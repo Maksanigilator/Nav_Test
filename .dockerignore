@@ -1,0 +1,12 @@
+# В образ копируется только docker/entrypoint.sh.
+# Всё остальное в контекст сборки гонять незачем — src/ монтируется при запуске.
+src/
+build/
+install/
+log/
+.git/
+.gitignore
+*.md
+__pycache__/
+.vscode/
+.idea/
