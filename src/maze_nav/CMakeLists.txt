@@ -6,7 +6,7 @@ find_package(ament_cmake REQUIRED)
 # Пакет без кода: только данные. Их надо положить в share/,
 # чтобы launch-файлы находили их через get_package_share_directory().
 install(
-  DIRECTORY launch worlds models maps params
+  DIRECTORY launch worlds models maps params scripts
   DESTINATION share/${PROJECT_NAME}
 )
 
