@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Генератор лабиринтов для Gazebo Classic.
+"""Генератор лабиринтов для Gazebo Harmonic (gz sim).
 
 Строит случайный ИДЕАЛЬНЫЙ лабиринт (между любыми двумя точками
 ровно один путь) алгоритмом recursive backtracker и сохраняет его
@@ -69,15 +69,64 @@ def segments(n, cell, vw, hw):
 
 def to_sdf(segs, name):
     parts = [f'''<?xml version="1.0" ?>
-<sdf version="1.6">
+<sdf version="1.10">
   <world name="{name}">
-    <include><uri>model://ground_plane</uri></include>
-    <include><uri>model://sun</uri></include>
 
-    <physics type="ode">
+    <!-- Системные плагины gz sim. Без Physics мир стоит на месте,
+         без SceneBroadcaster gz gui показывает пустоту,
+         без Sensors лидар не выдаёт /scan, без Imu — /imu. -->
+    <plugin filename="gz-sim-physics-system"
+            name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system"
+            name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system"
+            name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-sensors-system"
+            name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="gz-sim-imu-system"
+            name="gz::sim::systems::Imu"/>
+
+    <physics name="default_physics" type="ode">
       <real_time_update_rate>1000.0</real_time_update_rate>
       <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
     </physics>
+
+    <!-- Земля и солнце описаны прямо здесь, а не через model://ground_plane:
+         в gz sim такие include тянутся из онлайновой Fuel, и без интернета
+         (или за прокси) мир поднимался бы без пола — робот проваливался бы. -->
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.9</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1</ambient>
+            <diffuse>0.8 0.8 0.8 1</diffuse>
+            <specular>0.8 0.8 0.8 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
 
     <model name="maze">
       <static>true</static>

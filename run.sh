@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Запуск контейнера с ROS 2 Humble + Nav2 + Gazebo Classic.
+# Запуск контейнера с ROS 2 Jazzy + Nav2 + Gazebo Harmonic.
 #
 #   ./run.sh                    первый терминал — поднять контейнер
 #   ./run.sh                    второй/третий — подключиться к работающему
 #   ./run.sh ros2 topic list    выполнить разовую команду
 set -euo pipefail
 
-IMAGE="nav2:humble"
+IMAGE="nav2:jazzy"
 NAME="nav2"
 WS="$HOME/Nav_Test"
 PKG="/root/ros_ws/src/maze_nav"
@@ -32,11 +32,12 @@ exec docker run -it --rm \
     -e DISPLAY="${DISPLAY}" \
     -e XAUTHORITY=/tmp/.docker.xauth \
     -e NVIDIA_DRIVER_CAPABILITIES=all \
-    `# ВАЖНО: системный путь обязателен первым, иначе Gazebo не найдёт` \
-    `# model://ground_plane и робот провалится сквозь несуществующую землю.` \
-    `# Путь к исходникам пакета — вторым: правки видны без пересборки.` \
-    -e GAZEBO_MODEL_PATH="/usr/share/gazebo-11/models:/opt/ros/humble/share/turtlebot3_gazebo/models:${PKG}/models" \
-    -e GAZEBO_RESOURCE_PATH="/usr/share/gazebo-11:${PKG}/worlds" \
+    `# Один путь вместо пары GAZEBO_MODEL_PATH/GAZEBO_RESOURCE_PATH:` \
+    `# Gazebo Harmonic ищет и модели, и миры в GZ_SIM_RESOURCE_PATH.` \
+    `# Модели TurtleBot3 — первыми: model.sdf тянет меши через` \
+    `# model://turtlebot3_common. Исходники пакета — следом:` \
+    `# правки в моделях и мирах видны без пересборки.` \
+    -e GZ_SIM_RESOURCE_PATH="/opt/ros/jazzy/share/turtlebot3_gazebo/models:${PKG}/models:${PKG}/worlds" \
     -v "${XAUTH}:/tmp/.docker.xauth:ro" \
     -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
     --device /dev/dri:/dev/dri \
@@ -45,5 +46,5 @@ exec docker run -it --rm \
     `# артефакты сборки и кэш Gazebo — в томах, на хост не выносятся` \
     -v nav2_build:/root/ros_ws/build \
     -v nav2_install:/root/ros_ws/install \
-    -v nav2_gazebo:/root/.gazebo \
+    -v nav2_gz:/root/.gz \
     "${IMAGE}" "${@:-zsh}"

@@ -2,7 +2,7 @@
 set -e
 
 # ROS сам не подхватывается — setup нужно source-ить в каждой новой сессии
-source /opt/ros/humble/setup.zsh
+source /opt/ros/jazzy/setup.zsh
 
 # install/ появляется только после первого colcon build,
 # поэтому под проверкой [ -f ] — иначе свежий контейнер падал бы при старте
