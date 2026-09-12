@@ -92,7 +92,12 @@ class Waypoint:
     x: float
     y: float
     yaw: float
-    stop: bool = False             # обязательная остановка (знак «стоп»)
+    # Знак Б.6 «Место остановки»: зона посадки, регламент требует постоять
+    # там 2 секунды. Поле называется stop по историческим причинам.
+    stop: bool = False
+    # Знак Б.7 «Место стоянки»: зона высадки и конец маршрута. Робот должен
+    # остановиться перед ней, дальше ехать некуда — задание выполнено.
+    parking: bool = False
     kind: str = 'straight'         # straight | corner_in | corner_out | intersection
     # Направление въезда. Нужно углам: точка поворота принимает робота только
     # с одной стороны, иначе граф разрешил бы въехать в неё против движения.
@@ -334,7 +339,13 @@ class RouteGraph:
         """Учесть знак, замеченный в точке node_id.
 
         sign: no_left | no_right | no_straight | only_left | only_right |
-              only_straight | stop
+              only_straight | stop | parking
+
+        Регламент «Города РТК» использует семь знаков: предписывающие
+        «движение прямо / налево / направо», запрещающие «поворот налево
+        запрещён» и «поворот направо запрещён», плюс «место остановки» и
+        «место стоянки». Запрета движения прямо среди них нет, но граф его
+        понимает — пригодится для собственных тестов.
         Возвращает список изменённых рёбер — удобно логировать, что именно
         поменялось после распознавания.
 
@@ -347,6 +358,9 @@ class RouteGraph:
             return changed
         if sign == 'stop':
             self.nodes[node_id].stop = True
+            return [node_id]
+        if sign == 'parking':
+            self.nodes[node_id].parking = True
             return [node_id]
 
         forbid = {'no_left': 'left', 'no_right': 'right', 'no_straight': 'straight'}
@@ -368,6 +382,7 @@ class RouteGraph:
             e.enabled = True
         for n in self.nodes.values():
             n.stop = False
+            n.parking = False
 
     # ---------------- поиск пути ----------------
     def find_path(self, start: str, goal: str) -> list[str] | None:
@@ -438,7 +453,8 @@ class RouteGraph:
                 {'id': n.id, 'row': n.row, 'col': n.col,
                  'dir': DIR_NAME[n.direction] if n.direction else 'X',
                  'x': round(n.x, 4), 'y': round(n.y, 4),
-                 'yaw': round(n.yaw, 4), 'stop': n.stop, 'kind': n.kind,
+                 'yaw': round(n.yaw, 4), 'stop': n.stop,
+                 'parking': n.parking, 'kind': n.kind,
                  'in_dir': DIR_NAME[n.in_dir] if n.in_dir else None,
                  'index': n.index}
                 for n in self.nodes.values()
@@ -458,6 +474,7 @@ class RouteGraph:
             g.nodes[n['id']] = Waypoint(
                 row=n['row'], col=n['col'], direction=d,
                 x=n['x'], y=n['y'], yaw=n['yaw'], stop=n.get('stop', False),
+                parking=n.get('parking', False),
                 kind=n.get('kind', 'straight'),
                 in_dir=NAME_DIR.get(n['in_dir']) if n.get('in_dir') else None,
                 index=n.get('index', 0))

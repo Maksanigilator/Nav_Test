@@ -28,6 +28,8 @@
   пробел                 старт / пауза
   Backspace              сброс симуляции
   1 2 3                  повесить знак no_left / no_right / no_straight
+  M                      расставить знаки полигона: направляющие плюс зоны
+                         посадки («место остановки») и высадки («стоянка»)
   0                      снять все знаки
   Ctrl+S                 сохранить
   колесо                 масштаб, перетаскивание фона — панорама
@@ -37,8 +39,10 @@
 берутся из /route_state, который публикует route_follower.
 """
 import argparse
+import copy
 import math
 import os
+import random
 import sys
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
@@ -55,6 +59,27 @@ from maze_nav.route_graph import (RouteGraph, Waypoint, RouteEdge, DIR_NAME,
 
 NODE_R = 13          # радиус точки на экране, пиксели
 PICK_R = 16          # радиус попадания мышью
+
+# Знаки полигона по Приложению Б регламента. Управляют выбором рёбер:
+# предписывающие Б.1-Б.3 и запрещающие Б.4-Б.5. Запрета движения прямо
+# в регламенте нет, поэтому случайно он не ставится, хотя граф его понимает.
+SIGN_KINDS = ('only_straight', 'only_left', 'only_right',
+              'no_left', 'no_right')
+# Б.6 «место остановки» — зона посадки, стоим 2 секунды; Б.7 «место
+# стоянки» — зона высадки и конец маршрута. Рёбра они не трогают.
+SIGN_STOP = 'stop'
+SIGN_PARKING = 'parking'
+STOP_PAUSE_MS = 2000        # регламент: «остановился на 2 секунды»
+SIGN_LETTER = {'only_straight': 'S', 'only_left': 'L', 'only_right': 'R',
+               'no_straight': 'S', 'no_left': 'L', 'no_right': 'R',
+               SIGN_STOP: 'O', SIGN_PARKING: 'P'}
+SIGN_R = 11          # радиус кружка знака на экране
+
+# При русской раскладке ev.key() возвращает код кириллической буквы, и ни
+# одно латинское сочетание не срабатывает: нажатие M приходит как «ь».
+# Приводим букву к латинице по физическому месту клавиши на ЙЦУКЕН.
+RU_TO_EN = {'ь': 'M', 'т': 'N', 'ы': 'S', 'у': 'E', 'ц': 'W', 'п': 'G',
+            'з': 'P', 'ш': 'I', 'е': 'T', 'к': 'R', 'г': 'U', 'с': 'C'}
 
 
 def load_map(yaml_path):
@@ -174,6 +199,13 @@ class Canvas(QWidget):
         self.visits = {}         # сколько раз были в каждой точке
         self.current = None      # куда едет прямо сейчас
         self.goal = None         # конечная цель маршрута
+        # Знаки, расставленные по полигону. На схеме они видны сразу, но на
+        # граф действуют только после «распознавания» — когда робот приедет
+        # в точку. Так проверяется вся цепочка целиком: увидели знак,
+        # применили, рёбра отключились, маршрут пересчитался на ходу.
+        self.placed_signs = {}    # id точки -> знак, ещё не распознан
+        self.detected_signs = {}  # id точки -> знак, уже применён к графу
+        self.parked = False       # доехали до зоны высадки, маршрут закончен
         # Симуляция: робот едет по графу без Nav2 и Gazebo — проверяется
         # ровно та же логика выбора точек, что и в route_follower.
         self.robot = None        # реальная поза из TF: (x, y, yaw)
@@ -285,6 +317,36 @@ class Canvas(QWidget):
                 q.setPen(QColor(255, 255, 120))
                 q.drawText(QPointF(p.x() + NODE_R + 3, p.y() - NODE_R - 2), nid)
 
+        # знаки. Пока не распознан — тусклый серый кружок: знак стоит, но
+        # робот его ещё не видел и граф не тронут. После распознавания
+        # кружок загорается: красный ободок у запрещающих, синяя заливка
+        # у предписывающих — как на настоящих дорожных знаках.
+        for nid, sign in self.placed_signs.items():
+            n = self.g.nodes.get(nid)
+            if not n:
+                continue
+            p = self.w2s(n.x, n.y)
+            c = QPointF(p.x() + NODE_R + SIGN_R - 2, p.y() - NODE_R - SIGN_R + 2)
+            # Синие — предписывающие и информационные (остановка, стоянка),
+            # с красным ободком — запрещающие. Как в ГОСТ Р 52289.
+            blue = sign.startswith('only_') or sign in (SIGN_STOP, SIGN_PARKING)
+            if nid not in self.detected_signs:
+                ring, fill, ink = (QColor(120, 120, 125), QColor(70, 70, 75),
+                                   QColor(170, 170, 175))
+            elif blue:
+                ring, fill, ink = (QColor(10, 10, 10), QColor(30, 90, 200),
+                                   QColor(255, 255, 255))
+            else:
+                ring, fill, ink = (QColor(220, 40, 40), QColor(255, 255, 255),
+                                   QColor(20, 20, 20))
+            q.setPen(QPen(ring, 3))
+            q.setBrush(QBrush(fill))
+            q.drawEllipse(c, SIGN_R, SIGN_R)
+            q.setPen(ink)
+            q.setFont(QFont('DejaVu Sans', 9, QFont.Bold))
+            q.drawText(QRectF(c.x() - SIGN_R, c.y() - SIGN_R, SIGN_R * 2, SIGN_R * 2),
+                       Qt.AlignCenter, SIGN_LETTER.get(sign, '?'))
+
         # план симуляции — толстой полупрозрачной линией
         if self.sim_path:
             q.setPen(QPen(QColor(255, 0, 200, 90), 8))
@@ -341,8 +403,11 @@ class Canvas(QWidget):
                            "синяя цель, красные стоп")
         q.drawText(10, 66, "I — id, T — стоп, R — перегенерировать, Ctrl+S — сохранить")
         q.drawText(10, 82, "симуляция: G цель, P поставить робота, пробел старт/пауза, "
-                           "1/2/3 знаки, 0 снять, Backspace сброс")
+                           "1/2/3 знаки, M случайные знаки, 0 снять, Backspace сброс")
         q.drawText(10, 98, "красный треугольник — симуляция, синий — реальный робот из TF")
+        q.drawText(10, 114, "знаки: серый — не распознан, красный ободок — запрет, "
+                            "синий — предписание; L/R/S направление, "
+                            "O остановка (2 с), P стоянка (финиш)")
 
     def _arrow(self, q, a, b, color, width, head=9, dashed=False):
         pen = QPen(color, width)
@@ -419,6 +484,9 @@ class Canvas(QWidget):
     # --- клавиши ---
     def keyPressEvent(self, ev):
         k = ev.key()
+        letter = RU_TO_EN.get(ev.text().lower())
+        if letter:
+            k = getattr(Qt, 'Key_' + letter)
         for key, d in ((Qt.Key_N, NORTH), (Qt.Key_S, SOUTH),
                        (Qt.Key_E, EAST), (Qt.Key_W, WEST)):
             if k == key and not (ev.modifiers() & Qt.ControlModifier):
@@ -460,8 +528,10 @@ class Canvas(QWidget):
                 if hasattr(w, 'bridge'):
                     w.bridge.send_sign(nid, sign)
         elif k == Qt.Key_0:
-            self.g.reset_signs()
+            self.clear_signs()
             self.status.setText("все знаки сняты, рёбра восстановлены")
+        elif k == Qt.Key_M:
+            self.place_random_signs()
         elif k == Qt.Key_C:
             self.on_route_state('reset')
             self.status.setText("подсветка проезда сброшена")
@@ -487,6 +557,142 @@ class Canvas(QWidget):
         self.update()
 
     # --- правки графа ---
+    # ---------------- знаки ----------------
+    def _sign_options(self, nid):
+        """Знаки, осмысленные в этой точке.
+
+        Условий два. Из точки должен быть выбор — вешать запрет там, где и
+        так один выезд, нечего. И знак не должен гасить все выезды разом,
+        иначе робот окажется заперт в точке, а симуляция просто встанет.
+        """
+        out = [e for (s, _), e in self.g.edges.items() if s == nid and e.enabled]
+        if len(out) < 2:
+            return []
+        kinds = {e.kind for e in out}
+        opts = []
+        for sign in SIGN_KINDS:
+            if sign.startswith('no_'):
+                target = sign[3:]
+                left = [e for e in out if e.kind != target]
+            else:
+                target = sign[5:]
+                left = [e for e in out if e.kind == target]
+            if target in kinds and left:
+                opts.append(sign)
+        return opts
+
+    def _signs_survivable(self, plan):
+        """Проверить расклад на копии графа, не трогая настоящий.
+
+        Знаки применяются к probe, и если после них хоть из одной точки
+        некуда выехать или пропал путь до цели, расклад бракуется.
+        """
+        probe = copy.deepcopy(self.g)
+        for nid, sign in plan.items():
+            probe.apply_sign(nid, sign)
+        out = dict.fromkeys(probe.nodes, 0)
+        for (src, _), e in probe.edges.items():
+            if e.enabled:
+                out[src] += 1
+        if any(v == 0 for v in out.values()):
+            return False
+        if self.goal:
+            start = self.sim_at or min(probe.nodes.items(),
+                                       key=lambda kv: kv[1].index)[0]
+            if not probe.find_path(start, self.goal):
+                return False
+        return True
+
+    def place_random_signs(self, count=8, stops=2):
+        """Расставить знаки полигона: направляющие, остановки и стоянку.
+
+        На граф они сразу не действуют: рёбра отключатся, когда робот
+        приедет в точку и знак «распознается». Расклад перебирается, пока
+        не найдётся такой, при котором полигон остаётся проезжим.
+
+        Состав взят из регламента: count направляющих знаков, stops зон
+        посадки («место остановки») и ровно одна зона высадки («место
+        стоянки»). Если цель задана, стоянка садится прямо на неё — по
+        заданию высадка и есть конец маршрута.
+        """
+        self.clear_signs()
+        start = self.sim_at or min(self.g.nodes.items(),
+                                   key=lambda kv: kv[1].index)[0]
+        # Зона высадки выбирается первой и выводится из кандидатов: иначе
+        # на неё сядет направляющий знак, и стоянке места уже не останется.
+        park = self.goal or random.choice([n for n in self.g.nodes if n != start])
+        cands = [nid for nid in self.g.nodes
+                 if nid != park and self._sign_options(nid)]
+        if not cands:
+            self.status.setText("нет точек с развилкой — знаки вешать некуда")
+            return
+        k = min(count, len(cands))
+        # Знаки, раскиданные совсем случайно, чаще всего оказываются в
+        # стороне от маршрута и ни на что не влияют. Поэтому половину
+        # ставим прямо на текущий план: тогда видно, как робот упирается
+        # в запрет и перекладывает путь.
+        on_route = []
+        if self.goal:
+            path = self.g.find_path(start, self.goal) or []
+            on_route = [nid for nid in path if nid in cands]
+        for _ in range(40):
+            picked = []
+            if on_route:
+                picked = random.sample(on_route, min((k + 1) // 2, len(on_route)))
+            rest = [nid for nid in cands if nid not in picked]
+            picked += random.sample(rest, min(k - len(picked), len(rest)))
+            plan = {nid: random.choice(self._sign_options(nid))
+                    for nid in picked}
+            if self._signs_survivable(plan):
+                self._add_zone_signs(plan, park, start, stops)
+                self.placed_signs = plan
+                where = ', '.join(
+                    f"{self.g.nodes[n].index}:{sign}"
+                    for n, sign in sorted(plan.items(),
+                                          key=lambda kv: self.g.nodes[kv[0]].index))
+                self.status.setText(f"знаков расставлено {len(plan)} — {where}")
+                self.update()
+                return
+        self.status.setText("не удалось расставить знаки, не заперев полигон")
+
+    def _add_zone_signs(self, plan, park, start, stops):
+        """Добавить к раскладу зоны посадки и высадки.
+
+        Рёбер они не трогают, поэтому связность от них не страдает и
+        ставить их можно в любую точку — лишь бы не поверх другого знака.
+        """
+        plan[park] = SIGN_PARKING
+
+        # Зоны посадки ставим по пути к высадке, иначе робот до них просто
+        # не доедет и выдержку проверить будет негде.
+        route = self.g.find_path(start, park) or [] if self.goal else []
+        free = [n for n in route[1:] if n not in plan] or \
+               [n for n in self.g.nodes if n not in plan and n != start]
+        for nid in random.sample(free, min(stops, len(free))):
+            plan[nid] = SIGN_STOP
+
+    def clear_signs(self):
+        self.parked = False
+        self.g.reset_signs()
+        self.placed_signs.clear()
+        self.detected_signs.clear()
+        self.update()
+
+    def _detect_sign(self, nid):
+        """Робот приехал в точку и увидел знак, если тот здесь стоит.
+
+        Здесь и происходит то, что на живом роботе сделает связка камеры с
+        детектором: знак превращается в вызов apply_sign, тот гасит рёбра,
+        а маршрут пересчитывается сам — тем же find_path на следующем шаге.
+        """
+        sign = self.placed_signs.get(nid)
+        if sign is None or nid in self.detected_signs:
+            return
+        changed = self.g.apply_sign(nid, sign)
+        self.detected_signs[nid] = sign
+        self.status.setText(f"точка {self.g.nodes[nid].index}: распознан знак "
+                            f"{sign}, отключено рёбер {len(changed)}")
+
     # ---------------- симуляция ----------------
     def sim_start(self):
         """Поехали. С целью — по маршруту, без цели — в режиме исследования.
@@ -500,8 +706,23 @@ class Canvas(QWidget):
             first = min(self.g.nodes.items(), key=lambda kv: kv[1].index)[0]
             self.sim_at = first
             self.passed = {first}
+        if self.parked:
+            self.status.setText("робот в зоне высадки, маршрут выполнен — "
+                                "Backspace для нового заезда")
+            return
+        # Знак в самой стартовой точке тоже надо увидеть до первого хода.
+        self._detect_sign(self.sim_at)
         self.sim_timer.start(30)
         self.status.setText(f"симуляция: {self.sim_at} -> {self.goal}")
+
+    def _resume_after_stop(self):
+        """Продолжить после выдержки у зоны посадки.
+
+        Проверка нужна: за две секунды пользователь мог нажать паузу или
+        сбросить симуляцию, и просто так перезапускать таймер нельзя.
+        """
+        if self.sim_at and not self.parked:
+            self.sim_timer.start(30)
 
     def sim_stop(self):
         self.sim_timer.stop()
@@ -509,6 +730,13 @@ class Canvas(QWidget):
 
     def sim_reset(self):
         self.sim_timer.stop()
+        # Знаки остаются на местах, но снова считаются нераспознанными, и
+        # рёбра восстанавливаются: один и тот же расклад можно проиграть
+        # несколько раз подряд. Снимаются при этом и пометки «стоп»,
+        # расставленные вручную клавишей T.
+        self.g.reset_signs()
+        self.detected_signs.clear()
+        self.parked = False
         self.sim_at = self.sim_to = None
         self.sim_t = 0.0
         self.sim_path = []
@@ -530,10 +758,31 @@ class Canvas(QWidget):
             self.passed.add(self.sim_at)
             self.visits[self.sim_to] = self.visits.get(self.sim_to, 0) + 1
             self.sim_at, self.sim_to, self.sim_t = self.sim_to, None, 0.0
-            if self.g.nodes[self.sim_at].stop:
-                self.status.setText(f"{self.sim_at}: знак «стоп», стою")
+            # «Камера» смотрит знаки ровно в момент приезда в точку — так же,
+            # как это будет делать route_follower по сервису захвата кадра.
+            # Дальше по этой же итерации find_path пересчитает маршрут, уже
+            # с учётом погашенных рёбер.
+            self._detect_sign(self.sim_at)
+            node = self.g.nodes[self.sim_at]
+            # Зона высадки — конец задания: дальше робот никуда не едет.
+            if node.parking:
                 self.sim_timer.stop()
-                QTimer.singleShot(1500, lambda: self.sim_timer.start(30))
+                self.parked = True
+                self.passed.add(self.sim_at)
+                self.current = None
+                self.sim_path = []
+                self.status.setText(
+                    f"точка {node.index}: знак «место стоянки» — зона высадки, "
+                    f"маршрут выполнен")
+                self.update()
+                return
+            # Зона посадки: регламент требует постоять ровно 2 секунды.
+            if node.stop:
+                self.status.setText(
+                    f"точка {node.index}: знак «место остановки», "
+                    f"стою {STOP_PAUSE_MS / 1000:.0f} с — посадка")
+                self.sim_timer.stop()
+                QTimer.singleShot(STOP_PAUSE_MS, self._resume_after_stop)
                 self.update()
                 return
 
@@ -691,6 +940,10 @@ class Main(QMainWindow):
 
         bar = QHBoxLayout()
         for w in (self.btn_start, self.btn_sim, self.btn_reset, self.chk_live):
+            # Нажатая кнопка забирает фокус себе, и дальше все клавиши уходят
+            # ей, а не холсту: знаки по M не ставятся, а пробел вместо
+            # старта симуляции повторно жмёт саму кнопку.
+            w.setFocusPolicy(Qt.NoFocus)
             bar.addWidget(w)
         bar.addStretch(1)
 
@@ -715,6 +968,10 @@ class Main(QMainWindow):
         self.bridge.got_pose.connect(self.canvas.on_robot_pose)
         self.bridge.ready.connect(self.on_ros_ready)
         self.bridge.start()
+
+    def keyPressEvent(self, ev):
+        """Страховка: клавиши работают, даже если фокус ушёл с холста."""
+        self.canvas.keyPressEvent(ev)
 
     def on_ros_ready(self, ok):
         self.chk_live.setEnabled(ok)
