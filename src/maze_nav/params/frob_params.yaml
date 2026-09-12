@@ -100,8 +100,11 @@ controller_server:
     general_goal_checker:
       stateful: True
       plugin: "nav2_controller::SimpleGoalChecker"
+      # Радиус прибытия 20 см: точки стоят на полосах, и требовать попадания
+      # точнее бессмысленно — робота сносит на дуге. Угол ослаблен до ~29
+      # градусов по той же причине.
       xy_goal_tolerance: 0.20
-      yaw_goal_tolerance: 0.35
+      yaw_goal_tolerance: 0.50
 
     FollowPath:
       # Rotation Shim: сначала развернуться на месте, потом ехать. Для
@@ -123,7 +126,7 @@ controller_server:
       min_lookahead_dist: 0.25
       max_lookahead_dist: 0.7
       lookahead_time: 1.5
-      transform_tolerance: 0.2
+      transform_tolerance: 0.5
       use_velocity_scaled_lookahead_dist: true
       min_approach_linear_velocity: 0.05
       approach_velocity_scaling_dist: 0.5
@@ -149,6 +152,8 @@ local_costmap:
       rolling_window: true
       width: 2
       height: 2
+      # TF идёт по Wi-Fi с запозданием, дефолтных 0.3 не хватало
+      transform_tolerance: 0.5
       resolution: 0.05
       # НАМЕРЕННО ЗАНИЖЕН. Реальный корпус — цилиндр R=0.11 м, но при честном
       # радиусе робот не пролезал между объектами: планировщик не находил пути,
@@ -193,6 +198,7 @@ global_costmap:
       use_sim_time: False
       update_frequency: 1.0
       publish_frequency: 1.0
+      transform_tolerance: 0.5
       global_frame: map
       robot_base_frame: base_footprint
       robot_radius: 0.06
@@ -287,7 +293,9 @@ behavior_server:
     local_frame: odom
     global_frame: map
     robot_base_frame: base_footprint
-    transform_tolerance: 0.2
+    # 0.5 вместо 0.2: TF идёт по Wi-Fi с запозданием в десятки миллисекунд,
+    # из-за чего сыпались "Lookup would require extrapolation into the future"
+    transform_tolerance: 0.5
     simulate_ahead_time: 2.0
     max_rotational_vel: 0.8
     min_rotational_vel: 0.4
@@ -332,7 +340,9 @@ collision_monitor:
     cmd_vel_in_topic: "cmd_vel_smoothed"
     cmd_vel_out_topic: "cmd_vel"
     state_topic: "collision_monitor_state"
-    transform_tolerance: 0.2
+    # 0.5 вместо 0.2: TF идёт по Wi-Fi с запозданием в десятки миллисекунд,
+    # из-за чего сыпались "Lookup would require extrapolation into the future"
+    transform_tolerance: 0.5
     source_timeout: 1.0
     base_shift_correction: True
     stop_pub_timeout: 2.0
