@@ -22,6 +22,8 @@ install(
     scripts/gen_city_map.py
     scripts/scan_fov.py
     scripts/enc_check.py
+    scripts/calib_odom.py
+    scripts/odom_compare.py
     scripts/route_editor.py
     scripts/route_follower.py
   DESTINATION lib/${PROJECT_NAME}
