@@ -17,15 +17,23 @@
 Отправить цель (id точки из графа):
     ros2 topic pub --once /route_goal std_msgs/String "{data: 'n_4_4_E'}"
 
-Распознанный знак подаётся снаружи, строкой "точка:знак":
+Знаки спрашиваются сами: приехав в точку, узел зовёт сервис
+/detect_signs (его держит детектор в контейнере с YOLO), тот снимает
+несколько кадров с камеры робота и отвечает именем знака. Имя точки
+подставляется здесь же — робот в ней стоит, гадать не о чем, поэтому
+геометрическая привязка детекции к узлу графа не нужна вовсе.
+
+Ручная подача знака никуда не делась, ей удобно отлаживать без камеры:
     ros2 topic pub --once /route_sign std_msgs/String "{data: 'n_2_2_N:no_left'}"
 
-ДОРАБОТАТЬ, когда появится распознавание знаков:
-  * заменить топик /route_sign на подписку к детектору (vision_msgs) и
-    самим определять, к какой точке знак относится, по позе робота;
-  * сейчас знак действует бессрочно — см. reset_signs() в route_graph;
-  * действие «стоп» — простая пауза; для полигона может требоваться
-    выдержка именно на стоп-линии, а не в центре полосы;
+Детектор не может остановить заезд: не ответил за detect_timeout — едем
+дальше без знака. Отвалившаяся камера не повод замереть на полигоне.
+
+ДОРАБОТАТЬ:
+  * знак действует бессрочно — см. reset_signs() в route_graph. На
+    полигоне робот проезжает перекрёсток не один раз;
+  * выдержка у «места остановки» отсчитывается в центре полосы, а
+    регламент может требовать её на стоп-линии;
   * при недостижимости цели узел сдаётся; разумно добавить объезд или
     повторную попытку с другой полосы.
 """
@@ -46,6 +54,7 @@ from rclpy.duration import Duration
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
 from nav2_msgs.action import NavigateToPose
 from std_msgs.msg import String
+from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformListener
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
@@ -53,10 +62,14 @@ from maze_nav.route_graph import RouteGraph, DIR_NAME, NAME_DIR
 
 
 class RouteFollower(Node):
-    def __init__(self, graph_path, stop_seconds):
+    def __init__(self, graph_path, stop_seconds, detect_service='/detect_signs',
+                 detect_timeout=1.5):
         super().__init__('route_follower')
         self.g = RouteGraph.load(graph_path)
         self.stop_seconds = stop_seconds
+        self.detect_timeout = detect_timeout
+        # Сколько раз повторить отправку цели, если Nav2 её отклонил.
+        self.goal_retries = 5
         self.goal_id = None
         self.busy = False
 
@@ -73,6 +86,17 @@ class RouteFollower(Node):
         self.create_subscription(String, '/route_goal', self.on_goal, 10)
         self.create_subscription(String, '/route_sign', self.on_sign, 10)
         self.create_subscription(String, '/route_start', self.on_start, 10)
+
+        # Детектор знаков. Живёт в другом контейнере (образ с YOLO), общаемся
+        # по сети ROS: сервис — команда «посмотри», топик — ответ.
+        # Имя знака приходит топиком, а не в ответе сервиса, потому что в
+        # Trigger.Response лежит только человекочитаемая строка, и разбирать
+        # её парсером было бы хрупко.
+        self.detect_cli = self.create_client(Trigger, detect_service,
+                                             callback_group=self.cb_group)
+        self.last_sign = ''
+        self.sign_event = threading.Event()
+        self.create_subscription(String, '/sign_detected', self.on_detected, 10)
         self.pub_state = self.create_publisher(String, '/route_state', 10)
         self.pub_init = self.create_publisher(PoseWithCovarianceStamped,
                                               '/initialpose', 10)
@@ -213,6 +237,10 @@ class RouteFollower(Node):
                     "проверь, активированы ли узлы")
                 self._state('failed')
                 return
+            # Сервер появился — но это ещё не значит, что он активирован.
+            # Небольшая пауза снимает самую частую гонку; остальное добирают
+            # повторы в goto().
+            time.sleep(2.0)
             self.get_logger().info("Nav2 готов, поехали")
 
             while rclpy.ok():
@@ -254,13 +282,28 @@ class RouteFollower(Node):
                     self._state('failed')
                     return
 
-                if self.g.nodes[nxt].stop:
-                    self.get_logger().info(f"знак «стоп» в {nxt}: стою {self.stop_seconds} с")
+                # Знаки смотрим сразу по приезде и ДО пересчёта маршрута:
+                # следующая итерация цикла уже учтёт погашенные рёбра.
+                self.look_for_sign(nxt)
+
+                node = self.g.nodes[nxt]
+                # Знак Б.7 «место стоянки» — зона высадки и конец задания.
+                if node.parking:
+                    self.get_logger().info(
+                        f"точка {node.index}: «место стоянки» — зона высадки, "
+                        f"маршрут выполнен")
+                    self._state('parked')
+                    return
+                # Знак Б.6 «место остановки» — зона посадки, стоим положенное.
+                if node.stop:
+                    self.get_logger().info(
+                        f"точка {node.index}: «место остановки», "
+                        f"стою {self.stop_seconds} с — посадка")
                     time.sleep(self.stop_seconds)
         finally:
             self.busy = False
 
-    def goto(self, wp) -> bool:
+    def goto(self, wp, attempt: int = 0) -> bool:
         """Отправить одну точку в Nav2 и дождаться результата.
 
         Ожидание — через threading.Event, который взводится в callback.
@@ -283,7 +326,20 @@ class RouteFollower(Node):
             return False
         handle = send.result()
         if not handle or not handle.accepted:
-            self.get_logger().error("Nav2 отклонил цель")
+            # Отказ на старте — не приговор. Сервер действий появляется в
+            # сети раньше, чем bt_navigator переходит в active по жизненному
+            # циклу, и wait_for_server этого не различает. В логе это выглядит
+            # так: "Nav2 готов, поехали" и через миллисекунду
+            # "Action server is inactive. Rejecting the goal."
+            # Поэтому ждём и пробуем ещё раз, а не сдаёмся насовсем.
+            if attempt < self.goal_retries:
+                self.get_logger().warn(
+                    f"Nav2 отклонил цель (попытка {attempt + 1} из "
+                    f"{self.goal_retries + 1}), жду и повторяю")
+                time.sleep(2.0)
+                return self.goto(wp, attempt + 1)
+            self.get_logger().error(
+                f"Nav2 отклонил цель {self.goal_retries + 1} раз подряд")
             return False
 
         res = handle.get_result_async()
@@ -302,6 +358,57 @@ class RouteFollower(Node):
         future.add_done_callback(lambda _: done.set())
         return done.wait(timeout)
 
+    def on_detected(self, msg):
+        """Ответ детектора: имя знака или пустая строка."""
+        self.last_sign = msg.data
+        self.sign_event.set()
+
+    def look_for_sign(self, node_id):
+        """Приехали в точку — спросить детектор, что он видит.
+
+        Вызывается из потока маршрута, поэтому блокирующее ожидание здесь
+        законно: исполнитель многопоточный, остальные callbacks в это время
+        продолжают работать.
+
+        Любая неудача — молчащий сервис, таймаут, пустой ответ — означает
+        «знака нет», и маршрут продолжается. Детектор не имеет права
+        остановить заезд: камера может отвалиться, а робот должен доехать.
+        """
+        if not self.detect_cli.service_is_ready():
+            # Ждём совсем немного: если детектор не запущен, каждый приезд
+            # в точку не должен стоить секунды простоя.
+            if not self.detect_cli.wait_for_service(timeout_sec=0.2):
+                return None
+
+        self.sign_event.clear()
+        self.last_sign = ''
+        future = self.detect_cli.call_async(Trigger.Request())
+        if not self._wait(future, self.detect_timeout):
+            self.get_logger().warn(
+                f'детектор не ответил за {self.detect_timeout} с, едем без знака')
+            return None
+
+        resp = future.result()
+        if resp is None or not resp.success:
+            msg = resp.message if resp else 'нет ответа'
+            self.get_logger().warn(f'детектор: {msg}')
+            return None
+
+        # Сервис уже ответил, но сообщение из топика могло чуть отстать:
+        # публикация и ответ уходят порознь, и порядок доставки не гарантирован.
+        self.sign_event.wait(0.3)
+        sign = self.last_sign
+        if not sign:
+            self.get_logger().info(f'{node_id}: знаков не видно')
+            return None
+
+        changed = self.g.apply_sign(node_id, sign)
+        idx = self.g.nodes[node_id].index
+        self.get_logger().info(
+            f'точка {idx}: знак {sign}, отключено рёбер {len(changed)}')
+        self._state(f'sign:{node_id}:{sign}')
+        return sign
+
     def _state(self, text):
         m = String()
         m.data = text
@@ -312,12 +419,18 @@ def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--graph', required=True, help='yaml графа маршрутов')
-    p.add_argument('--stop-seconds', type=float, default=3.0,
-                   help='сколько стоять у знака «стоп» (по умолчанию 3)')
+    # Ровно 2 секунды — так написано в регламенте про зоны посадки.
+    p.add_argument('--stop-seconds', type=float, default=2.0,
+                   help='сколько стоять у «места остановки» (по умолчанию 2)')
+    p.add_argument('--detect-service', default='/detect_signs',
+                   help='сервис детектора знаков; пустая строка — не спрашивать')
+    p.add_argument('--detect-timeout', type=float, default=1.5,
+                   help='сколько ждать ответа детектора, секунд')
     a, unknown = p.parse_known_args()
 
     rclpy.init()
-    node = RouteFollower(a.graph, a.stop_seconds)
+    node = RouteFollower(a.graph, a.stop_seconds,
+                         a.detect_service, a.detect_timeout)
     # Многопоточный: рабочий поток маршрута ждёт результатов Nav2, а
     # исполнитель тем временем продолжает принимать команды и TF.
     ex = MultiThreadedExecutor()
@@ -326,8 +439,18 @@ def main():
         ex.spin()
     except KeyboardInterrupt:
         pass
-    node.destroy_node()
-    rclpy.shutdown()
+    # На Ctrl+C и на SIGTERM от launch контекст успевает закрыться сам, и
+    # повторный shutdown падает с "rcl_shutdown already called". Тракт
+    # завершения от этого не меняется, но стектрейс в логе пугает зря.
+    try:
+        node.destroy_node()
+    except Exception:
+        pass
+    try:
+        if rclpy.ok():
+            rclpy.shutdown()
+    except Exception:
+        pass
 
 
 if __name__ == '__main__':
