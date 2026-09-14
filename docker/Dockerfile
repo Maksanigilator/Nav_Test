@@ -29,10 +29,43 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y \
     ros-jazzy-teleop-twist-keyboard \
     ros-jazzy-rmw-cyclonedds-cpp \
     ros-jazzy-ros-gz \
+    ros-jazzy-vision-msgs \
     && rm -rf /var/lib/apt/lists/*
 #Рос пакеты.
 #ros-jazzy-ros-gz = Gazebo Harmonic + мост gz<->ROS. Классического
 #gazebo_ros в Jazzy нет: Gazebo Classic 11 не собирается под Ubuntu 24.04.
+
+# ═══ YOLO: детектор дорожных знаков ═══
+# Узел живёт в пакете src/yolo и читает MJPEG-поток с Raspberry по HTTP,
+# поэтому нужен requests. Инференс идёт здесь, на видеокарте ноутбука:
+# GPU в контейнер уже проброшен (--gpus all в run.sh), nvidia-smi внутри
+# отвечает, libcuda на месте — ultralytics подтянет torch со сборкой под
+# CUDA и будет считать на ней.
+#
+# numpy пинится ЖЁСТКО и это не перестраховка: rclpy в Jazzy собран под
+# numpy 1.26, а torch тянет 2.x. Без пина ломается не детектор, а весь
+# ROS в контейнере — падает любой питоновский узел.
+#
+# opencv-python-headless вместо opencv-python: системный cv2 и так есть
+# из ROS, а GUI-сборке нужны иксовые библиотеки, которых тут не надо.
+# Узлу от cv2 требуются только imdecode и рисование рамок — есть в обеих.
+#
+# --break-system-packages обязателен: в Ubuntu 24.04 включён PEP 668
+# (/usr/lib/python3.12/EXTERNALLY-MANAGED), иначе pip просто откажется.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# --timeout/--retries не перестраховка: колёса torch весят под гигабайт
+# каждое, качаются по Wi-Fi минутами, и первая же сборка развалилась на
+# ReadTimeoutError с files.pythonhosted.org. Дефолтные 15 секунд таймаута
+# для таких файлов малы.
+RUN pip3 install --break-system-packages --no-cache-dir \
+        --timeout 120 --retries 10 \
+        "numpy<2" \
+        ultralytics \
+        requests \
+        opencv-python-headless
 
 RUN sh -c "$(curl -fsSL https://github.com/deluan/zsh-in-docker/releases/download/v1.1.5/zsh-in-docker.sh)" -- \
     -t bira \

@@ -1,0 +1,84 @@
+# Оба контейнера проекта одной командой.
+#
+#   docker compose up -d              поднять оба
+#   docker compose exec nav2 zsh      войти в контейнер с Nav2
+#   docker compose exec yolo bash     войти в контейнер с детектором
+#   docker compose down               остановить оба
+#
+# Compose здесь не обязателен — run.sh и run_yolo.sh делают то же самое
+# двумя отдельными `docker run`. Разница лишь в том, что настройки обоих
+# контейнеров описаны в одном месте и не расходятся между скриптами.
+#
+# Общая сеть хоста и одинаковый ROS_DOMAIN_ID обязательны: контейнеры и
+# робот общаются через DDS, и любое расхождение рвёт связь молча —
+# участники видят друг друга, а данные не ходят.
+
+services:
+  # ── Навигация: Nav2, RViz, редактор маршрута, исполнитель ──────────────
+  nav2:
+    image: nav2:jazzy
+    container_name: nav2
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    network_mode: host
+    ipc: host
+    gpus: all
+    stdin_open: true
+    tty: true
+    environment:
+      DISPLAY: ${DISPLAY}
+      XAUTHORITY: /tmp/.docker.xauth
+      NVIDIA_DRIVER_CAPABILITIES: all
+      # Gazebo Harmonic ищет и модели, и миры в одной переменной. Модели
+      # TurtleBot3 первыми: их model.sdf тянет меши через model://.
+      GZ_SIM_RESOURCE_PATH: /opt/ros/jazzy/share/turtlebot3_gazebo/models:/root/ros_ws/src/maze_nav/models:/root/ros_ws/src/maze_nav/worlds
+    volumes:
+      # Под GDM cookie лежит не в ~/.Xauthority, а в /run/user/1000/gdm/
+      - ${XAUTHORITY:-${HOME}/.Xauthority}:/tmp/.docker.xauth:ro
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # Единственный bind-mount: весь код и данные живут в пакете
+      - ./src:/root/ros_ws/src
+      # Артефакты сборки — в именованных томах, на хост не выносятся
+      - nav2_build:/root/ros_ws/build
+      - nav2_install:/root/ros_ws/install
+      - nav2_gz:/root/.gz
+    devices:
+      - /dev/dri:/dev/dri
+
+  # ── Детектор дорожных знаков ──────────────────────────────────────────
+  # Образ собран не здесь: torch с CUDA и ultralytics в нём уже есть.
+  # Копия его Dockerfile — docker/Dockerfile.yolo, для справки.
+  yolo:
+    image: yolo:latest
+    container_name: yolo_signs
+    network_mode: host
+    ipc: host
+    gpus: all
+    stdin_open: true
+    tty: true
+    environment:
+      DISPLAY: ${DISPLAY}
+      XAUTHORITY: /tmp/.docker.xauth
+      NVIDIA_DRIVER_CAPABILITIES: all
+      ROS_DOMAIN_ID: 42
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+    volumes:
+      - ${XAUTHORITY:-${HOME}/.Xauthority}:/tmp/.docker.xauth:ro
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # Репозиторий целиком: ноде нужны и свой код в src/yolo/, и веса
+      # из src/yolo. Второй копии модели заводить незачем.
+      - .:/root/ros_ws
+    devices:
+      - /dev/dri:/dev/dri
+
+# Имена томов закреплены явно. Без этого compose добавил бы к ним имя
+# проекта и создал пустые nav_test_nav2_install и прочие — а существующие,
+# со всей сборкой colcon, остались бы в стороне. Тихая и обидная потеря.
+volumes:
+  nav2_build:
+    name: nav2_build
+  nav2_install:
+    name: nav2_install
+  nav2_gz:
+    name: nav2_gz
