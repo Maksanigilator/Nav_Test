@@ -1,0 +1,123 @@
+# Образ для Raspberry Pi 5 (arm64): Nav2 прямо на борту робота.
+#
+# Зачем он нужен. Сейчас Nav2 крутится на ноутбуке, и по Wi-Fi в него
+# идут /scan, /tf и /odometry/filtered на 10-25 Гц. Канал этого не
+# выдерживает: мы ловили "queue is full" с потерей сканов и снижали
+# частоту EKF с 45 до 25 Гц только чтобы разгрузить эфир. Если Nav2
+# переедет на робота, весь этот трафик перестанет покидать плату, а по
+# сети пойдёт только интерфейс — и его обрыв робота уже не остановит.
+#
+# Сборка не на Pi, а на ноутбуке через эмуляцию — на самой плате это
+# заняло бы часы. См. соседний build.sh.
+#
+# Код проекта внутрь образа НЕ вшит: он монтируется с хоста, как и на
+# ноутбуке. Смысл в том, что правка параметра Nav2 доезжает до робота
+# копированием файла, а не пересборкой arm64-образа под эмуляцией.
+# Чтобы монтировать было что, build.sh кладёт копию src/ рядом с собой.
+
+# ros-base, а не osrf/ros:jazzy-desktop: из всего desktop-набора нам
+# нужен один rviz2, он ставится ниже отдельной строкой. Остальное там —
+# симулятор, демки и туториалы, которым на роботе делать нечего.
+ARG BASE_IMAGE=ros:jazzy-ros-base
+FROM $BASE_IMAGE
+
+# ═══ Nav2 поштучно, а не метапакетом ═══
+#
+# Здесь нет ни ros-jazzy-navigation2, ни ros-jazzy-nav2-bringup, и это
+# главное отличие от образа ноутбука. Оба тянут за собой лишнее:
+#
+#   nav2-bringup  -> nav2-minimal-tb3-sim, nav2-minimal-tb4-sim,
+#                    ros-gz-sim, ros-gz-bridge (Gazebo целиком, вместе
+#                    с gz-ogre-next и физическим движком DART),
+#                    slam-toolbox, diff-drive-controller, xacro
+#   navigation2   -> nav2-rviz-plugins, а с ними весь X-стек;
+#                    плюс mppi, smac, theta-star, dwb, graceful,
+#                    route, opennav-docking — ничего из этого наш
+#                    конфиг не включает
+#
+# Поэтому ставим ровно те пакеты, узлы которых поднимает наш
+# nav2_frob.launch.py, и ни одного сверх того. Штатный bringup_launch.py
+# здесь и не запустить — но он нам и не нужен, свой launch лежит в
+# maze_nav и перечисляет узлы руками именно ради этого.
+#
+# apt-get upgrade обязателен: база заморожена на старых пакетах, а
+# navigation2 из репозитория собран под свежий fastcdr, и без
+# обновления узлы падают на undefined symbol.
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
+    `# локализация` \
+    ros-jazzy-nav2-amcl \
+    ros-jazzy-nav2-map-server \
+    ros-jazzy-nav2-lifecycle-manager \
+    `# движение: контроллер и два его плагина из конфига` \
+    ros-jazzy-nav2-controller \
+    ros-jazzy-nav2-regulated-pure-pursuit-controller \
+    ros-jazzy-nav2-rotation-shim-controller \
+    `# планирование пути и его сглаживание` \
+    ros-jazzy-nav2-planner \
+    ros-jazzy-nav2-navfn-planner \
+    ros-jazzy-nav2-smoother \
+    `# костмапы: static, obstacle и inflation слои` \
+    ros-jazzy-nav2-costmap-2d \
+    `# дерево поведения и то, что оно дёргает` \
+    ros-jazzy-nav2-bt-navigator \
+    ros-jazzy-nav2-behaviors \
+    ros-jazzy-nav2-waypoint-follower \
+    `# хвост цепочки скоростей до робота` \
+    ros-jazzy-nav2-velocity-smoother \
+    ros-jazzy-nav2-collision-monitor \
+    `# сборка пакетов проекта прямо на роботе` \
+    python3-colcon-common-extensions \
+    `# vision_msgs нужен пакету yolo: он копируется вместе с src/, и без` \
+    `# него colcon build без --packages-select падал бы на ровном месте` \
+    ros-jazzy-vision-msgs \
+    `# ручное управление, когда навигация встала и надо отъехать` \
+    ros-jazzy-teleop-twist-keyboard \
+    && rm -rf /var/lib/apt/lists/*
+
+# ═══ Графика: RViz и редактор маршрута прямо на роботе ═══
+#
+# Окна открываются на плате, а показываются на ноутбуке через X11
+# (ssh -X). За это платим примерно полутора гигабайтами образа, зато
+# ноутбук становится просто экраном: всё, что считает и решает,
+# работает на роботе и переживает обрыв Wi-Fi.
+#
+# rviz2 тянет за собой rviz_default_plugins, а наш frob_nav.rviz других
+# и не просит — Map, LaserScan, Path, RobotModel, PoseWithCovariance,
+# SetGoal и SetInitialPose все оттуда. Поэтому nav2-rviz-plugins не
+# нужен: он добавил бы только панель управления lifecycle-узлами.
+#
+# python3-pyqt5 — для route_editor.py, окна с графом маршрутов.
+#
+# libgl1-mesa-dri обязателен и это не мелочь. RViz рисует через Ogre и
+# просит OpenGL 3.3, а GPU у Pi 5 (V3D) до этого не дотягивает. Без
+# программного растеризатора llvmpipe из этого пакета RViz не откроется
+# вообще. mesa-utils нужен, только чтобы проверить glxinfo, когда не
+# откроется, — весит мало, а диагностику экономит.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-jazzy-rviz2 \
+    python3-pyqt5 \
+    libgl1-mesa-dri \
+    mesa-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# xcb, а не wayland: через ssh -X приезжает именно X-сервер.
+ENV QT_QPA_PLATFORM=xcb
+
+# Fast DDS — то же, на чём говорят нативные узлы робота и контейнер
+# ноутбука. Cyclone здесь ставить нельзя: с ним видны имена узлов, но
+# не видны их топики, и данные не ходят вообще.
+ENV RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+ENV ROS_DOMAIN_ID=42
+
+RUN echo "source /opt/ros/jazzy/setup.bash" >> ~/.bashrc && \
+    echo '[ -f /root/ros_ws/install/setup.bash ] && source /root/ros_ws/install/setup.bash' >> ~/.bashrc
+
+WORKDIR /root/ros_ws
+
+# Свой entrypoint, а не общий docker/entrypoint.sh: тот на zsh, которого
+# в ros-base нет, и контейнер падал бы прямо на старте.
+COPY docker/robot/entrypoint.sh /tmp/entrypoint.sh
+RUN chmod +x /tmp/entrypoint.sh
+
+ENTRYPOINT ["/tmp/entrypoint.sh"]
+CMD ["bash"]

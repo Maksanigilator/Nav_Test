@@ -1,0 +1,70 @@
+# Детектор дорожных знаков на самом роботе (arm64, Raspberry Pi 5).
+#
+# Отдельный образ, а не строчка в Dockerfile.arm, и это осознанно:
+#
+#   * torch с ultralytics весят больше, чем вся навигация. Навигационный
+#     образ пересобирается от каждой правки YAML, и таскать через
+#     эмуляцию лишний гигабайт при каждой такой сборке незачем;
+#   * установка torch под qemu — самое хрупкое место всей сборки. У нас
+#     уже дважды разваливался pip на ReadTimeoutError с
+#     files.pythonhosted.org. Пусть его падение не блокирует доставку
+#     навигации: образы независимы и копируются по отдельности;
+#   * детектор нужен не всегда. Проехать полигон без знаков можно, и
+#     тогда этот образ на робота просто не везут.
+#
+# Отличия от ноутбучного docker/Dockerfile.yolo: там инференс идёт на
+# видеокарте (device: cuda:0), здесь — на процессоре Pi (device: cpu).
+# На процессоре ноутбука полный запрос из трёх кадров занял 1.5 секунды;
+# на A76 будет дольше. Нам этого хватает: детектор вызывается по приезде
+# в точку, робот в этот момент стоит и никуда не торопится.
+
+ARG BASE_IMAGE=ros:jazzy-ros-base
+FROM $BASE_IMAGE
+
+# rclpy, sensor_msgs и std_srvs уже есть в базе. Докладываем только то,
+# без чего не обойтись: pip и заголовки для сборки колёс, которых может
+# не оказаться готовыми под aarch64.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3-pip \
+    python3-dev \
+    build-essential \
+    `# libGL нужен opencv даже в headless-сборке: он грузит libglib` \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# numpy пинится ЖЁСТКО и это не перестраховка: rclpy в Jazzy собран под
+# numpy 1.26, а torch тянет 2.x. Без пина ломается не детектор, а весь
+# ROS в контейнере — падает любой питоновский узел.
+#
+# Колёса torch под aarch64 на PyPI собраны без CUDA, отдельный индекс
+# для CPU-сборки здесь не нужен — на Pi ускорять всё равно нечем.
+#
+# opencv-python-headless: GUI-сборке нужны иксовые библиотеки, а узлу от
+# cv2 требуются только VideoCapture, imdecode и рисование рамок.
+#
+# --timeout/--retries обязательны: колёса весят сотни мегабайт, качаются
+# по Wi-Fi минутами, и дефолтные 15 секунд таймаута для них малы. Именно
+# на этом сборка ноутбучного образа разваливалась дважды.
+#
+# --break-system-packages — из-за PEP 668 в Ubuntu 24.04
+# (/usr/lib/python3.12/EXTERNALLY-MANAGED), иначе pip просто откажется.
+RUN pip3 install --break-system-packages --no-cache-dir \
+        --timeout 120 --retries 10 \
+        "numpy<2" \
+        ultralytics \
+        opencv-python-headless
+
+# Fast DDS и домен — те же, что у навигации и у нативных узлов робота.
+ENV RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+ENV ROS_DOMAIN_ID=42
+
+RUN echo "source /opt/ros/jazzy/setup.bash" >> ~/.bashrc && \
+    echo '[ -f /root/ros_ws/install/setup.bash ] && source /root/ros_ws/install/setup.bash' >> ~/.bashrc
+
+WORKDIR /root/ros_ws
+
+COPY docker/robot/entrypoint.sh /tmp/entrypoint.sh
+RUN chmod +x /tmp/entrypoint.sh
+
+ENTRYPOINT ["/tmp/entrypoint.sh"]
+CMD ["bash"]
