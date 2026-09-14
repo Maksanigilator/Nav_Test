@@ -24,6 +24,9 @@ install(
     scripts/enc_check.py
     scripts/calib_odom.py
     scripts/odom_compare.py
+    scripts/yaw_check.py
+    scripts/dir_check.py
+    scripts/scan_sectors.py
     scripts/route_editor.py
     scripts/route_follower.py
   DESTINATION lib/${PROJECT_NAME}
