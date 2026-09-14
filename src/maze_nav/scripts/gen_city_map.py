@@ -3,7 +3,7 @@
 
 Строит occupancy grid (.pgm + .yaml) напрямую из геометрии полигона,
 без объезда лидаром. Источник размеров — scene/city_builder.py проекта
-gorod_rtk, копия лежит в регламент/ этого репозитория.
+gorod_rtk, копия лежит в gorod_rtk_sim/ этого репозитория.
 
     ./gen_city_map.py -o ../maps/city
     ./gen_city_map.py --gate south:4 -o ../maps/city   # въезд у правого угла
