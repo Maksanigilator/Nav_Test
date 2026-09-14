@@ -1,116 +1,133 @@
-# ROS 2 Jazzy + Nav2 + Gazebo Harmonic
+# Навигация робота Frob на полигоне «Город РТК»
 
-1. Сборка
+ROS 2 Jazzy + Nav2. Робот едет по полигону 5×5 клеток, держится своей полосы,
+читает дорожные знаки камерой и выполняет их: сворачивает, стоит две секунды
+у места остановки, завершает заезд у места стоянки.
 
-cd ~/Nav_Test
-docker build -f docker/Dockerfile -t nav2:jazzy .
-часть	смысл
--f docker/Dockerfile	где лежит Dockerfile
-.	контекст сборки — от него считается путь в COPY docker/entrypoint.sh
--t nav2:jazzy	имя и тег образа
-Именно поэтому запускать надо из Nav_Test/, а не из docker/ — иначе COPY не найдёт файл.
+Все команды — в [RUN.md](RUN.md). Здесь — как всё устроено и почему так.
 
-⏱ Первый раз — минут десять: 1.2 ГБ базы плюс Nav2 со всеми зависимостями. Дальше пересборки будут быстрыми за счёт кэша слоёв.
+## Из чего состоит
 
-2. Запуск
+Работы делятся между двумя машинами, и делятся они **двумя способами**.
 
-Проще всего — ./run.sh: он же подключается вторым терминалом к уже поднятому контейнеру.
-Полный эквивалент вручную:
+**Режим А — навигация на ноутбуке.** Так мы отлаживали.
 
-docker run -it --rm \
-  --name nav2 \
-  --network host \
-  --ipc host \
-  --gpus all \
-  -e DISPLAY="$DISPLAY" \
-  -e XAUTHORITY=/tmp/.docker.xauth \
-  -e NVIDIA_DRIVER_CAPABILITIES=all \
-  -e GZ_SIM_RESOURCE_PATH=/opt/ros/jazzy/share/turtlebot3_gazebo/models:/root/ros_ws/src/maze_nav/models \
-  -v "$XAUTHORITY":/tmp/.docker.xauth:ro \
-  -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
-  --device /dev/dri:/dev/dri \
-  -v ~/Nav_Test/src:/root/ros_ws/src \
-  nav2:jazzy
-Разбор флагов
-флаг	зачем
---network host	DDS discovery работает без настройки; без этого узлы не найдут друг друга
---ipc host	разделяемая память для DDS. Без него /dev/shm = 64 МБ, и большие топики (карты, облака точек) молча теряются
---gpus all	доступ к RTX 3080
--e NVIDIA_DRIVER_CAPABILITIES=all	критично: без него дадут CUDA, но не OpenGL, и Gazebo откроется чёрным окном
--e GZ_SIM_RESOURCE_PATH	где gz sim ищет модели и миры. Заменяет пару GAZEBO_MODEL_PATH/GAZEBO_RESOURCE_PATH из Gazebo Classic
--v "$XAUTHORITY":/tmp/.docker.xauth:ro	X11-cookie. У тебя он в /run/user/1000/gdm/, а не в ~/.Xauthority — рецепты из интернета тут не сработают
--v /tmp/.X11-unix	сокет X-сервера
---device /dev/dri	прямой рендеринг
--v ~/Nav_Test/src:...	твой код с хоста внутрь контейнера
---rm	удалить контейнер при выходе
-Про --rm: контейнер исчезает, когда закроешь этот терминал. Всё, что ты доставил внутрь руками, пропадёт — но src/ смонтирован с хоста и сохранится. Это нормальный режим для разработки. Если захочешь, чтобы контейнер жил дольше, убери --rm и добавь -d.
+```
+  Raspberry                        Ноутбук
+  bringup: лидар, IMU,    Wi-Fi    Nav2, AMCL, RViz, редактор
+  энкодеры, EKF, TF      ◄─────►   route_follower
+  sign_camera :8080       DDS      детектор знаков на видеокарте
+```
 
-3. Симулятор
+Узкое место — Wi-Fi: `/scan`, `/tf` и одометрия летят на ноутбук по 10–25 Гц.
+Мы на этом ловили «queue is full» с потерей сканов и роняли частоту EKF
+с 45 до 25 Гц только чтобы разгрузить эфир.
 
-ros2 launch maze_nav maze.launch.py            # лабиринт maze1 + TurtleBot3
-ros2 launch maze_nav maze.launch.py gui:=false # без окна, только физика
+**Режим Б — всё на роботе.** Ради заезда.
 
-4. Чем Jazzy отличается от Humble
+```
+  Raspberry                        Ноутбук
+  bringup + Nav2 + AMCL    X11     просто экран:
+  route_follower          ◄────►   окна RViz и редактора
+  детектор знаков (CPU)            приезжают по ssh -X
+```
 
-Gazebo Classic 11 в Jazzy нет вообще: он EOL и не собирается под Ubuntu 24.04.
-Симулятор здесь — Gazebo Harmonic (команда gz sim), а связь с ROS даёт ros_gz_bridge
-вместо плагинов libgazebo_ros_*. Что из этого следует на практике:
+Сканы и TF больше не покидают плату. Обрыв связи с ноутбуком робота
+не останавливает — он продолжает ехать.
 
-старое (Humble)	новое (Jazzy)
-gzserver / gzclient	gz sim -s / gz sim -g (через ros_gz_sim/gz_sim.launch.py)
-пакет gazebo_ros	пакеты ros_gz_sim, ros_gz_bridge
-GAZEBO_MODEL_PATH + GAZEBO_RESOURCE_PATH	один GZ_SIM_RESOURCE_PATH
-кэш в ~/.gazebo	кэш в ~/.gz
-model://ground_plane из базы моделей	земля и солнце описаны прямо в .world (иначе gz полез бы в онлайновую Fuel)
-.world в формате SDF 1.6	SDF 1.10 + системные плагины Physics/SceneBroadcaster/Sensors/Imu внутри мира
+## Что где лежит
 
-Геометрия лабиринта при переезде не менялась — maze1.world перегенерирован тем же
-seed (gen_maze.py --cells 6 --seed 1), так что карта maps/maze1.pgm остаётся валидной.
+| Папка | Что внутри |
+|---|---|
+| [src/maze_nav/](src/maze_nav/) | наш пакет: карты, конфиги Nav2, launch, граф маршрутов, редактор, исполнитель |
+| [src/yolo/](src/yolo/) | детектор знаков и веса модели |
+| [docker/](docker/) | образ для ноутбука (в корне папки) и специализированные — по подпапкам |
+| [docker/robot/](docker/robot/) | всё для робота: образы, скрипты, инструкция. Копируется на Pi целиком |
+| [регламент/](регламент/) | PDF регламента, схемы полигона. Только информация |
+| [gorod_rtk_sim/](gorod_rtk_sim/) | исходники симулятора организаторов — источник точной геометрии |
+| `arduino/` | прошивка. **Вне гита** намеренно |
 
-5. Навигация реального робота (Frob)
+Код самого робота живёт в отдельном репозитории:
+[dark516/Frob_robot](https://github.com/dark516/Frob_robot). Здесь его нет.
 
-Контейнер крутит Nav2, робот только отдаёт данные и принимает команды.
-Код робота живёт отдельно: https://github.com/dark516/Frob_robot
+## Три образа
 
-На роботе (Raspberry, по ssh) поднять всё разом:
+| Образ | Рецепт | Где | Что внутри |
+|---|---|---|---|
+| `nav2:jazzy` | [docker/Dockerfile](docker/Dockerfile) | ноутбук | Nav2, Gazebo Harmonic, RViz, torch с CUDA |
+| `yolo:latest` | [docker/Dockerfile.yolo](docker/Dockerfile.yolo) | ноутбук | детектор на видеокарте. Образ собран другим проектом, у нас копия рецепта для справки |
+| `nav2:jazzy-arm64` | [docker/robot/Dockerfile.arm](docker/robot/Dockerfile.arm) | робот | Nav2 + RViz + Qt под arm64 |
+| `yolo:jazzy-arm64` | [docker/robot/Dockerfile.yolo.arm](docker/robot/Dockerfile.yolo.arm) | робот | детектор на процессоре Pi |
 
-ros2 launch frob_bringup bringup.launch.py
+Логика раскладки: основной образ — в корне `docker/`, специализированные —
+по подпапкам. Подробности сборки и доставки на робота —
+в [docker/robot/README.md](docker/robot/README.md).
 
-Именно launch, а не голый arduino_bridge: bringup поднимает ещё лидар,
-lidar_filter, IMU, robot_state_publisher (TF по URDF) и одометрию
-(энкодерная нода + EKF robot_localization). Один arduino_bridge даёт только
-/cmd_vel и сырые тики энкодеров — без /odom и TF Nav2 не тронется с места.
+## Решения, которые стоит понимать
 
-В контейнере:
+**Код не вшит в образы, а монтируется с хоста.** Правка параметра Nav2
+доезжает до робота копированием файла, а не пересборкой arm64-образа под
+эмуляцией. Чтобы монтировать на роботе было что, сборка кладёт копию `src/`
+рядом с образом.
 
-./run.sh
-ros2 launch maze_nav frob.launch.py slam:=true          # построить карту
-ros2 launch maze_nav frob.launch.py map:=/путь/к/map.yaml # ехать по готовой
+**Свой launch вместо штатного `nav2_bringup`.**
+[nav2_frob.launch.py](src/maze_nav/launch/nav2_frob.launch.py) перечисляет
+узлы Nav2 руками. Причина в зависимостях: пакет `nav2-bringup` тянет Gazebo
+целиком вместе с движком DART, а метапакет `navigation2` — плагины RViz со
+всем X-стеком. На роботе это вчетверо больше образа ради кода, который не
+запускается. Набор узлов тот же за вычетом `route_server` и `docking_server`,
+которыми мы не пользуемся. `city.launch.py` идёт через него и на ноутбуке
+тоже — чтобы стек на борту и на столе не расходился незаметно.
 
-Что должно совпадать у контейнера и робота, иначе они друг друга не увидят:
-ROS_DOMAIN_ID (в образе 42) и RMW_IMPLEMENTATION (в образе rmw_fastrtps_cpp).
-Проверка связи — ros2 topic list внутри контейнера: должны быть видны
-/scan, /odometry/filtered и /cmd_vel.
+**Детекция знаков по запросу, а не потоком.** Пока никто не спрашивает,
+камера никуда не отдаёт ни байта. Постоянный видеопоток душил тот же Wi-Fi,
+по которому идут сканы. `route_follower` дёргает сервис `/detect_signs`,
+приехав в точку, — робот в этот момент стоит, и секунда-другая не мешает.
+Когда детектор работает на самом роботе, кадры берутся прямо с `/dev/video0`,
+и сеть не участвует вовсе.
 
-Цепочка команд скорости в Nav2 Jazzy:
-controller_server -> cmd_vel_nav -> velocity_smoother -> cmd_vel_smoothed
--> collision_monitor -> /cmd_vel, и уже его слушает arduino_bridge.
-Тип сообщения — geometry_msgs/Twist, как и ждёт мост; поэтому в
-frob_params.yaml enable_stamped_cmd_vel не включён (в отличие от maze_params*,
-где мост TurtleBot3 требует TwistStamped).
+**Карта не снята лидаром, а построена из регламента.**
+[gen_city_map.py](src/maze_nav/scripts/gen_city_map.py) генерирует `city.pgm`
+из размеров полигона. Она точна по определению, и пересобирать её не нужно.
 
-Опорные числа взяты из URDF робота и ros2_arduino_bridge: корпус — цилиндр
-R=0.11 м, база колёс 0.18 м, потолок моста 0.4863 м/с и 5.4 рад/с. Базовый
-фрейм — base_footprint; фрейма base_link у Frob нет вовсе.
+**Два секунды у остановки и завершение у стоянки** зашиты в
+[route_follower.py](src/maze_nav/scripts/route_follower.py) — так написано
+в регламенте. Классы модели пронумерованы по Приложению Б: `1` прямо,
+`2` налево, `3` направо, `4` налево запрещён, `5` направо запрещён,
+`6` место остановки, `7` место стоянки, `8` опасный объект (маршрут не меняет).
 
-6. Грабли перехода Humble -> Jazzy в конфигах Nav2
+## Грабли Jazzy
 
-Их стоит знать, если будешь править params руками:
+Пригодится, если будешь править конфиги Nav2 руками.
 
-* имена плагинов только через "::". Форма nav2_navfn_planner/NavfnPlanner
-  в Jazzy не существует, planner_server падает в FATAL и обрывает весь bringup;
-* collision_monitor теперь входит в nav2_bringup по умолчанию и без своей
-  секции параметров валит запуск на "observation_sources is not initialized";
-* behavior_server больше не знает costmap_topic/footprint_topic — вместо них
-  local_costmap_topic, global_costmap_topic, local_footprint_topic,
-  global_footprint_topic, а фреймов стало два: local_frame и global_frame.
+* **Имена плагинов только через `::`.** Форма `nav2_navfn_planner/NavfnPlanner`
+  в Jazzy не существует: `planner_server` падает в FATAL и обрывает весь запуск.
+* **`collision_monitor`** входит в стек по умолчанию и без своей секции
+  параметров валит запуск на `observation_sources is not initialized`.
+* **`behavior_server`** больше не знает `costmap_topic` и `footprint_topic`.
+  Вместо них четыре параметра — `local_costmap_topic`, `global_costmap_topic`,
+  `local_footprint_topic`, `global_footprint_topic`, — а фреймов стало два:
+  `local_frame` и `global_frame`.
+* **`apt-get upgrade` в Dockerfile обязателен.** База `osrf/ros:jazzy-*`
+  заморожена на старых пакетах, а `navigation2` из репозитория собран под
+  свежий `fastcdr`. Без обновления Nav2 стартует и падает на `undefined symbol`.
+* **Fast DDS, не Cyclone.** С Cyclone контейнер видит имена узлов робота,
+  но не видит их топиков, и данные не ходят вообще.
+
+## Gazebo: что изменилось после Humble
+
+Gazebo Classic 11 в Jazzy нет — он EOL и не собирается под Ubuntu 24.04.
+Симулятор здесь Gazebo Harmonic (`gz sim`), связь с ROS даёт `ros_gz_bridge`
+вместо плагинов `libgazebo_ros_*`.
+
+| Humble | Jazzy |
+|---|---|
+| `gzserver` / `gzclient` | `gz sim -s` / `gz sim -g` |
+| пакет `gazebo_ros` | `ros_gz_sim`, `ros_gz_bridge` |
+| `GAZEBO_MODEL_PATH` + `GAZEBO_RESOURCE_PATH` | один `GZ_SIM_RESOURCE_PATH` |
+| кэш в `~/.gazebo` | кэш в `~/.gz` |
+| `model://ground_plane` из базы моделей | земля и солнце описаны прямо в `.world` |
+| SDF 1.6 | SDF 1.10 плюс системные плагины внутри мира |
+
+Геометрия лабиринта при переезде не менялась: `maze1.world` перегенерирован
+тем же seed, поэтому старая карта осталась валидной.
