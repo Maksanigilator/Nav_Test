@@ -67,43 +67,7 @@ model://ground_plane из базы моделей	земля и солнце о�
 Геометрия лабиринта при переезде не менялась — maze1.world перегенерирован тем же
 seed (gen_maze.py --cells 6 --seed 1), так что карта maps/maze1.pgm остаётся валидной.
 
-5. Навигация реального робота (Frob)
-
-Контейнер крутит Nav2, робот только отдаёт данные и принимает команды.
-Код робота живёт отдельно: https://github.com/dark516/Frob_robot
-
-На роботе (Raspberry, по ssh) поднять всё разом:
-
-ros2 launch frob_bringup bringup.launch.py
-
-Именно launch, а не голый arduino_bridge: bringup поднимает ещё лидар,
-lidar_filter, IMU, robot_state_publisher (TF по URDF) и одометрию
-(энкодерная нода + EKF robot_localization). Один arduino_bridge даёт только
-/cmd_vel и сырые тики энкодеров — без /odom и TF Nav2 не тронется с места.
-
-В контейнере:
-
-./run.sh
-ros2 launch maze_nav frob.launch.py slam:=true          # построить карту
-ros2 launch maze_nav frob.launch.py map:=/путь/к/map.yaml # ехать по готовой
-
-Что должно совпадать у контейнера и робота, иначе они друг друга не увидят:
-ROS_DOMAIN_ID (в образе 42) и RMW_IMPLEMENTATION (в образе rmw_fastrtps_cpp).
-Проверка связи — ros2 topic list внутри контейнера: должны быть видны
-/scan, /odometry/filtered и /cmd_vel.
-
-Цепочка команд скорости в Nav2 Jazzy:
-controller_server -> cmd_vel_nav -> velocity_smoother -> cmd_vel_smoothed
--> collision_monitor -> /cmd_vel, и уже его слушает arduino_bridge.
-Тип сообщения — geometry_msgs/Twist, как и ждёт мост; поэтому в
-frob_params.yaml enable_stamped_cmd_vel не включён (в отличие от maze_params*,
-где мост TurtleBot3 требует TwistStamped).
-
-Опорные числа взяты из URDF робота и ros2_arduino_bridge: корпус — цилиндр
-R=0.11 м, база колёс 0.18 м, потолок моста 0.4863 м/с и 5.4 рад/с. Базовый
-фрейм — base_footprint; фрейма base_link у Frob нет вовсе.
-
-6. Грабли перехода Humble -> Jazzy в конфигах Nav2
+5. Грабли перехода Humble -> Jazzy в конфигах Nav2
 
 Их стоит знать, если будешь править params руками:
 
