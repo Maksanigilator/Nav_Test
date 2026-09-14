@@ -27,7 +27,6 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     pkg_maze = get_package_share_directory('maze_nav')
-    pkg_nav2 = get_package_share_directory('nav2_bringup')
 
     map_yaml = LaunchConfiguration('map')
     graph = LaunchConfiguration('graph')
@@ -48,22 +47,29 @@ def generate_launch_description():
         DeclareLaunchArgument('rviz', default_value='true'),
         DeclareLaunchArgument('editor', default_value='true'),
 
-        # Nav2 по готовой карте. use_sim_time False — время системное,
-        # /clock на реальном роботе никто не публикует.
+        # Nav2 по готовой карте. Свой nav2_frob.launch.py, а не штатный
+        # bringup_launch.py из nav2_bringup: тот пакет по зависимостям
+        # тянет симулятор и slam_toolbox, из-за чего образ для робота
+        # распухал вчетверо. Набор узлов тот же за вычетом route_server
+        # и docking_server, которыми мы не пользуемся.
+        # use_sim_time нигде не передаётся: он прописан False прямо в
+        # конфиге, /clock на реальном роботе никто не публикует.
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
-                os.path.join(pkg_nav2, 'launch', 'bringup_launch.py')),
+                os.path.join(pkg_maze, 'launch', 'nav2_frob.launch.py')),
             launch_arguments={
                 'map': map_yaml,
-                'slam': 'False',
                 'params_file': params_file,
-                'use_sim_time': 'False',
                 'autostart': 'True',
             }.items()),
 
+        # Свой вид, а не nav2_default_view: там курс робота показан мелкими
+        # осями TF, которые теряются среди точек скана. В нашем — крупная
+        # стрелка из /amcl_pose, по ней сразу видно, куда робот считает
+        # себя повёрнутым, и модель робота поверх карты.
         Node(
             package='rviz2', executable='rviz2', name='rviz2',
-            arguments=['-d', os.path.join(pkg_nav2, 'rviz', 'nav2_default_view.rviz')],
+            arguments=['-d', os.path.join(pkg_maze, 'rviz', 'frob_nav.rviz')],
             parameters=[{'use_sim_time': False}],
             condition=IfCondition(rviz), output='screen'),
 
