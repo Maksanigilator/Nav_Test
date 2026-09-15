@@ -6,7 +6,7 @@ find_package(ament_cmake REQUIRED)
 # Пакет без кода: только данные. Их надо положить в share/,
 # чтобы launch-файлы находили их через get_package_share_directory().
 install(
-  DIRECTORY launch worlds models maps params scripts
+  DIRECTORY launch worlds models maps params scripts behavior_trees rviz
   DESTINATION share/${PROJECT_NAME}
 )
 
