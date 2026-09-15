@@ -34,6 +34,43 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y \
 #ros-jazzy-ros-gz = Gazebo Harmonic + мост gz<->ROS. Классического
 #gazebo_ros в Jazzy нет: Gazebo Classic 11 не собирается под Ubuntu 24.04.
 
+
+# ═══ Слой RGB-D: навигация по RealSense вместо лидара ═══
+# Отдельным слоем, чтобы правки здесь не роняли кэш всего Nav2 выше.
+# Все пакеты есть бинарниками под Jazzy — собирать из исходников нечего.
+RUN apt-get update && apt-get install -y \
+    ros-jazzy-rtabmap-ros \
+    ros-jazzy-realsense2-camera \
+    ros-jazzy-realsense2-description \
+    ros-jazzy-spatio-temporal-voxel-layer \
+    ros-jazzy-depth-image-proc \
+    ros-jazzy-robot-localization \
+    ros-jazzy-imu-filter-madgwick \
+    ros-jazzy-image-transport-plugins \
+    ros-jazzy-pointcloud-to-laserscan \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+#rtabmap-ros = RGB-D SLAM: даёт /map и map->odom вместо связки map_server+AMCL,
+#  плюс rtabmap_odom — визуальная одометрия вместо колёсной.
+#spatio-temporal-voxel-layer — костмап-слой под depth-камеру: разреженные воксели
+#  с затуханием и frustum-очисткой. Обычный VoxelLayer на плотном облаке жрёт CPU
+#  и не умеет забывать препятствия, а при FOV 65° у D415 забывание обязательно.
+#realsense2-camera нужен только на реальном роботе, но пусть лежит в образе:
+#  так один и тот же образ годится и для симулятора, и для железа.
+#imu-filter-madgwick + robot-localization — IMU и слияние источников одометрии.
+#image-transport-plugins — сжатие depth/RGB: сырое облако 848x480 это ~390 МБ/с,
+#  по сети такое не ходит, гоняем сжатые картинки и считаем облако у потребителя.
+
+# rosbags — конвертер ROS1 bag -> ROS2 (датасеты TUM RGB-D лежат в формате ROS1).
+# evo — подсчёт ATE траектории против ground truth.
+# --break-system-packages: в Ubuntu 24.04 системный python помечен externally-managed
+# (PEP 668), а заводить venv внутри одноразового контейнера смысла нет.
+# pyrealsense2 нужен не для работы с живой камерой (её ведёт realsense2_camera),
+# а чтобы конвертировать записи .bag от librealsense. У ROS-обёртки нет режима
+# невещественного времени, из-за чего при выравнивании глубины она теряет кадры;
+# см. scripts/realsense_bag_to_ros2.py и RTABMAP.md.
+RUN pip3 install --no-cache-dir --break-system-packages rosbags evo pyrealsense2
+
 RUN sh -c "$(curl -fsSL https://github.com/deluan/zsh-in-docker/releases/download/v1.1.5/zsh-in-docker.sh)" -- \
     -t bira \
     -p git \

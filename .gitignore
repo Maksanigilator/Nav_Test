@@ -17,3 +17,7 @@ __pycache__/
 .idea/
 *.swp
 *~
+
+# Датасеты для RTAB-Map (TUM RGB-D и т.п.) — гигабайты, качаются скриптом.
+# Монтируются в контейнер как /datasets, см. run.sh и RUN.md.
+datasets/
