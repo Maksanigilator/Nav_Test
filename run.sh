@@ -37,12 +37,36 @@ mkdir -p "${WS}/src" "${WS}/datasets"
 exec docker run -it --rm \
     --name "${NAME}" \
     --network host \
+    `# --ipc host обязателен: без него у контейнера СВОЙ /dev/shm, и` \
+    `# разделяемая память между ним и хостом не заработает ни при каких правах.` \
     --ipc host \
+    `# Тот же UID, что у хоста. Ради разделяемой памяти Fast DDS: она` \
+    `# доставляет данные записью в файлы /dev/shm, созданные с правами 0644` \
+    `# и владельцем-создателем, поэтому при разных пользователях доставка` \
+    `# с хоста в контейнер запрещена — узлы и топики видны, данных нет.` \
+    `# Подробности и замеры — в docker/Dockerfile.` \
+    --user "$(id -u):$(id -g)" \
+    `# /root внутри образа открыт на запись (см. Dockerfile), а HOME нужен` \
+    `# явно: под --user он не подставляется, и оболочка не найдёт ни .zshrc,` \
+    `# ни настройки ros.` \
+    -e HOME=/root \
+    `# Группы video и render — доступ к /dev/dri. На этой машине их заменяет` \
+    `# ACL, который logind вешает на устройства для активной сессии, но ACL` \
+    `# есть не всегда (headless, другая машина), а лишние группы безвредны.` \
+    $(getent group video  >/dev/null && echo --group-add "$(getent group video  | cut -d: -f3)") \
+    $(getent group render >/dev/null && echo --group-add "$(getent group render | cut -d: -f3)") \
     --gpus all \
     -e DISPLAY="${DISPLAY}" \
     -e XAUTHORITY=/tmp/.docker.xauth \
     -e NVIDIA_DRIVER_CAPABILITIES=all \
     -e ROS_DOMAIN_ID="${ROS_DOMAIN_ID}" \
+    `# Транспорт Fast DDS НЕ навязываем: контейнер работает под тем же UID,` \
+    `# что и процессы на хосте (см. --user ниже), поэтому разделяемая память` \
+    `# доступна обеим сторонам и выбирается автоматически. Это важно для` \
+    `# тяжёлых потоков: цвет плюс глубина с камеры 848x480 это ~136 МБ/с,` \
+    `# а UDP по петле столько не тянет — замерено, глубина теряет кадры.` \
+    `# Принудить UDP можно так:  FASTDDS_BUILTIN_TRANSPORTS=UDPv4 ./run.sh` \
+    ${FASTDDS_BUILTIN_TRANSPORTS:+-e FASTDDS_BUILTIN_TRANSPORTS="$FASTDDS_BUILTIN_TRANSPORTS"} \
     `# Гибридная графика: без этих двух переменных OpenGL уходит на встроенную` \
     `# Intel, а не на дискретную NVIDIA. Проверяется через glxinfo -B:` \
     `# renderer должен быть NVIDIA, а не "Mesa Intel".` \
@@ -59,6 +83,13 @@ exec docker run -it --rm \
     --device /dev/dri:/dev/dri \
     `# код и данные пакета` \
     -v "${WS}/src:/root/ros_ws/src" \
+    `# Профиль транспорта Fast DDS: поднимает сегмент разделяемой памяти` \
+    `# с дефолтных ~512 КБ до 64 МБ. Кадр камеры 1.22 МБ в дефолтный сегмент` \
+    `# не влезает, и разделяемая память для него не работает — замерено,` \
+    `# выходит 22 Гц вместо 30, хуже чем по UDP. Подробности в самом файле.` \
+    -v "${WS}/fastdds_profiles.xml:/root/fastdds_profiles.xml:ro" \
+    -e FASTDDS_DEFAULT_PROFILES_FILE=/root/fastdds_profiles.xml \
+    -e FASTRTPS_DEFAULT_PROFILES_FILE=/root/fastdds_profiles.xml \
     `# датасеты (TUM RGB-D и пр.) — гигабайты, в git не лежат, см. .gitignore` \
     -v "${WS}/datasets:/datasets" \
     `# артефакты сборки и кэш Gazebo — в томах, на хост не выносятся` \

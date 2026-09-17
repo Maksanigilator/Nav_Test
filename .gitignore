@@ -21,3 +21,11 @@ __pycache__/
 # Датасеты для RTAB-Map (TUM RGB-D и т.п.) — гигабайты, качаются скриптом.
 # Монтируются в контейнер как /datasets, см. run.sh и RUN.md.
 datasets/
+
+# Ассеты Isaac Sim — производные, в git им не место.
+# Робот: восстанавливается за минуту двумя скриптами,
+#   ./isaac/export_robot.sh && "$ISAAC_PYTHON" isaac/import_robot.py
+# Окружения: качаются с сервера NVIDIA, офис ~700 МБ,
+#   ./isaac/fetch_env.py office
+isaac/assets/turtlebot3_waffle/
+isaac/assets/environments/

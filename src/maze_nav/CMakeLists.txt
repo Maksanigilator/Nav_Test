@@ -10,4 +10,14 @@ install(
   DESTINATION share/${PROJECT_NAME}
 )
 
+# Узлы, которые запускаются из launch через Node(executable=...), должны
+# лежать в lib/, а не только в share/: ros2 ищет исполняемые файлы именно там.
+# Остальные скрипты в scripts/ запускаются по полному пути (см. RUN.md),
+# им это не нужно.
+install(PROGRAMS
+  scripts/imu_noise.py
+  scripts/depth_noise.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 ament_package()
