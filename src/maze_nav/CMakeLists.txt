@@ -18,6 +18,10 @@ install(PROGRAMS
   scripts/imu_noise.py
   scripts/depth_noise.py
   scripts/twist_to_stamped.py
+  scripts/dropoff_detector.py
+  scripts/rail_oracle.py
+  scripts/rail_entry.py
+  scripts/rail_entry_monitor.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

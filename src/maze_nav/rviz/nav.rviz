@@ -1,0 +1,137 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Property Tree Widget:
+      Expanded: ~
+    Width: 300
+Visualization Manager:
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: map
+    Frame Rate: 20
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Cell Size: 1
+      Plane Cell Count: 20
+      Color: 100; 100; 100
+    - Class: rviz_default_plugins/RobotModel
+      Name: Робот
+      Enabled: true
+      Description Topic:
+        Value: /robot_description
+        Depth: 5
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+      Visual Enabled: true
+      Collision Enabled: false
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: false
+      Show Names: true
+      Marker Scale: 0.4
+    - Class: rviz_default_plugins/Map
+      Name: Карта занятости
+      Enabled: true
+      Topic:
+        Value: /map
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+      Color Scheme: map
+      Alpha: 0.35
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Карта точками
+      Enabled: true
+      Topic:
+        Value: /cloud_map
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+      Style: Flat Squares
+      Size (m): 0.03
+      Color Transformer: FlatColor
+      Color: 165; 165; 170
+      Decay Time: 0
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Препятствия карты (рельсы зелёные, кромка красная)
+      Enabled: true
+      Topic:
+        Value: /cloud_obstacles
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+      Style: Boxes
+      Size (m): 0.05
+      Color Transformer: RGB8
+      Color: 60; 225; 90
+      Decay Time: 0
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Обрыв (край настила)
+      Enabled: true
+      Topic:
+        Value: /dropoff/points
+        Depth: 1
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+      Style: Boxes
+      Size (m): 0.07
+      Color Transformer: FlatColor
+      Color: 235; 45; 45
+      Decay Time: 0
+    - Class: rviz_default_plugins/Odometry
+      Name: Визуальная одометрия
+      Enabled: true
+      Topic:
+        Value: /odom
+        Depth: 20
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+      Keep: 20
+      Position Tolerance: 0.15
+      Angle Tolerance: 0.2
+      Shape:
+        Alpha: 1
+        Color: 255; 180; 40
+        Head Length: 0.08
+        Head Radius: 0.05
+        Shaft Length: 0.2
+        Shaft Radius: 0.02
+        Value: Arrow
+      Covariance:
+        Value: false
+    - Class: rviz_default_plugins/Image
+      Name: Камера
+      Enabled: true
+      Topic:
+        Value: /camera/color/image_raw
+        Depth: 2
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+  Global Status:
+    Enabled: true
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+      Line color: 128; 128; 0
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Current View
+      Distance: 12
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+      Pitch: 0.75
+      Yaw: 3.2
+      Target Frame: base_footprint
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 900
+  Width: 1500
+  Hide Left Dock: false
+  Hide Right Dock: true

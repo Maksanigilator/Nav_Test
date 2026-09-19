@@ -1,0 +1,314 @@
+# Nav2 для агроробота на стенде с рельсами.
+#
+# Отдельный файл, а не правка maze_params_rgbd.yaml: тот настроен под
+# маленького робота в лабиринте (radius 0.22, скорость 0.26), и разница
+# здесь не в числах, а в постановке.
+#
+# ГЛАВНОЕ ОТЛИЧИЕ — робот велик относительно площадки. По мешу шасси он
+# 1.20 x 0.88 м, а настил 2 x 3 м. Описывать его окружностью нельзя: её
+# радиус 0.75 м, и после раздувания на настиле не осталось бы ни одной
+# свободной клетки под центр робота. Поэтому задан полигон, а критик
+# стоимости считает именно по нему.
+#
+# Разворот на месте требует круга радиусом 0.75 м, то есть поперёк настила
+# (2 м) центр робота может гулять лишь в полосе ±0.25 м. Это не настройка,
+# а физика площадки: точку старта надо выбирать в середине.
+#
+# Карту и map->odom даёт RTAB-Map, поэтому ни AMCL, ни map_server здесь нет.
+
+bt_navigator:
+  ros__parameters:
+    global_frame: map
+    robot_base_frame: base_footprint
+    odom_topic: /odom
+    bt_loop_duration: 10
+    default_server_timeout: 20
+    navigators: ['navigate_to_pose', 'navigate_through_poses']
+    navigate_to_pose:
+      plugin: "nav2_bt_navigator::NavigateToPoseNavigator"
+    navigate_through_poses:
+      plugin: "nav2_bt_navigator::NavigateThroughPosesNavigator"
+
+controller_server:
+  ros__parameters:
+    controller_frequency: 15.0
+    # Порог «робот считается стоящим». У меканума на рельсах реальная
+    # скорость заметно ниже скомандованной, но подход к точке идёт по
+    # настилу, там таких потерь нет.
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.001
+    min_theta_velocity_threshold: 0.001
+    failure_tolerance: 0.3
+    progress_checker_plugins: ["progress_checker"]
+    goal_checker_plugins: ["goal_checker"]
+    controller_plugins: ["FollowPath"]
+
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.10
+      movement_time_allowance: 15.0
+    goal_checker:
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.05
+      # Курс на точке старта важен: с него начинается выверка перед
+      # заездом, и чем меньше остаточная ошибка, тем меньше доворачивать.
+      yaw_goal_tolerance: 0.05
+      stateful: true
+
+    FollowPath:
+      plugin: "nav2_mppi_controller::MPPIController"
+      time_steps: 40
+      model_dt: 0.0667
+      batch_size: 1000
+      # Меканум ездит боком, и это здесь не роскошь: на площадке 2 м
+      # поперёк развернуться негде, а сместиться вбок можно всегда.
+      motion_model: "Omni"
+      vx_std: 0.15
+      vy_std: 0.15
+      wz_std: 0.30
+      vx_max: 0.25
+      vx_min: -0.25
+      vy_max: 0.15
+      wz_max: 0.50
+      iteration_count: 1
+      prune_distance: 1.2
+      transform_tolerance: 0.2
+      temperature: 0.3
+      gamma: 0.015
+      visualize: false
+      TrajectoryVisualizer:
+        trajectory_step: 5
+        time_step: 3
+      AckermannConstraints:
+        min_turning_r: 0.0
+      critics: ["ConstraintCritic", "CostCritic", "GoalCritic",
+                "GoalAngleCritic", "PathAlignCritic", "PathFollowCritic",
+                "PathAngleCritic", "PreferForwardCritic"]
+      ConstraintCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 4.0
+      GoalCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        threshold_to_consider: 1.0
+      GoalAngleCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 3.0
+        threshold_to_consider: 0.5
+      PreferForwardCritic:
+        enabled: true
+        cost_power: 1
+        # Слабо: у меканума нет причины предпочитать ход вперёд, а на
+        # тесной площадке боком часто единственный способ доехать.
+        cost_weight: 2.0
+        threshold_to_consider: 0.5
+      CostCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 3.81
+        critical_cost: 300.0
+        # ПО ПОЛИГОНУ, а не по окружности. С окружностью радиуса 0.75 м
+        # контроллер не нашёл бы на настиле ни одной допустимой позы.
+        consider_footprint: true
+        collision_cost: 1000000.0
+        near_goal_distance: 0.5
+      PathAlignCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 14.0
+        max_path_occupancy_ratio: 0.05
+        trajectory_point_step: 4
+        threshold_to_consider: 0.5
+        offset_from_furthest: 20
+      PathFollowCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        offset_from_furthest: 5
+        threshold_to_consider: 1.4
+      PathAngleCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 2.0
+        offset_from_furthest: 4
+        threshold_to_consider: 0.5
+        max_angle_to_furthest: 1.0
+        mode: 0
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      update_frequency: 5.0
+      publish_frequency: 2.0
+      global_frame: odom
+      robot_base_frame: base_footprint
+      rolling_window: true
+      width: 6
+      height: 6
+      resolution: 0.05
+      # Полигон корпуса: 1.20 x 0.88 м по мешу шасси, с запасом по 1 см.
+      footprint: "[[0.61, 0.45], [0.61, -0.45], [-0.61, -0.45], [-0.61, 0.45]]"
+      plugins: ["static_layer", "inflation_layer"]
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: true
+        subscribe_to_updates: true
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        # Раздувание маленькое намеренно. Робот описан полигоном, столкновения
+        # ловит критик стоимости, а большое раздувание на площадке 2 м
+        # закрасило бы её целиком.
+        cost_scaling_factor: 3.0
+        # Радиус равен ВПИСАННОМУ в корпус (полуширина 0.45 м), а не
+        # описанному (0.77). Планировщик всё равно считает робота кругом, и
+        # описанный радиус закрыл бы настил шириной 2 м целиком. Настоящую
+        # проверку по полигону делает критик стоимости у MPPI.
+        inflation_radius: 0.46
+      always_send_full_costmap: true
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      update_frequency: 2.0
+      publish_frequency: 1.0
+      global_frame: map
+      robot_base_frame: base_footprint
+      resolution: 0.05
+      track_unknown_space: true
+      footprint: "[[0.61, 0.45], [0.61, -0.45], [-0.61, -0.45], [-0.61, 0.45]]"
+      plugins: ["static_layer", "inflation_layer"]
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: true
+        subscribe_to_updates: true
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.46
+      always_send_full_costmap: true
+
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 2.0
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_navfn_planner::NavfnPlanner"
+      tolerance: 0.10
+      use_astar: true
+      allow_unknown: false
+
+smoother_server:
+  ros__parameters:
+    smoother_plugins: ["simple_smoother"]
+    simple_smoother:
+      plugin: "nav2_smoother::SimpleSmoother"
+      tolerance: 1.0e-10
+      max_its: 1000
+      do_refinement: true
+
+behavior_server:
+  ros__parameters:
+    local_costmap_topic: local_costmap/costmap_raw
+    global_costmap_topic: global_costmap/costmap_raw
+    local_footprint_topic: local_costmap/published_footprint
+    global_footprint_topic: global_costmap/published_footprint
+    cycle_frequency: 10.0
+    behavior_plugins: ["spin", "backup", "wait"]
+    spin:
+      plugin: "nav2_behaviors::Spin"
+    backup:
+      plugin: "nav2_behaviors::BackUp"
+    wait:
+      plugin: "nav2_behaviors::Wait"
+    local_frame: odom
+    global_frame: map
+    robot_base_frame: base_footprint
+    transform_tolerance: 0.2
+    simulate_ahead_time: 2.0
+    max_rotational_vel: 0.5
+    min_rotational_vel: 0.1
+    rotational_acc_lim: 1.0
+
+velocity_smoother:
+  ros__parameters:
+    smoothing_frequency: 20.0
+    scale_velocities: false
+    feedback: "OPEN_LOOP"
+    max_velocity: [0.25, 0.15, 0.5]
+    min_velocity: [-0.25, -0.15, -0.5]
+    max_accel: [1.0, 1.0, 2.0]
+    max_decel: [-1.0, -1.0, -2.0]
+    odom_topic: "odom"
+    odom_duration: 0.1
+
+collision_monitor:
+  ros__parameters:
+    base_frame_id: "base_footprint"
+    odom_frame_id: "odom"
+    # Монитор стоит ПОСЛЕДНИМ в цепочке скоростей и потому переименовывает
+    # выход Nav2 в тот топик, который слушает робот. Так связка получается
+    # без лишнего ретранслятора.
+    cmd_vel_in_topic: "cmd_vel_smoothed"
+    cmd_vel_out_topic: "cmd_vel"
+    state_topic: "collision_monitor_state"
+    transform_tolerance: 0.2
+    source_timeout: 1.0
+    base_shift_correction: true
+    stop_pub_timeout: 2.0
+    # Аварийная остановка по обрыву: точки края уже подделаны под обычное
+    # препятствие и лежат в облаке детектора, так что монитор видит край
+    # тем же способом, что и всё остальное.
+    polygons: ["FootprintApproach"]
+    FootprintApproach:
+      type: "polygon"
+      action_type: "approach"
+      footprint_topic: "/local_costmap/published_footprint"
+      time_before_collision: 1.2
+      simulation_time_step: 0.1
+      min_points: 6
+      visualize: false
+      enabled: true
+    observation_sources: ["dropoff"]
+    dropoff:
+      type: "pointcloud"
+      topic: "/dropoff/grid_cloud"
+      min_height: 0.10
+      max_height: 0.60
+      enabled: true
+
+# Стыковка с зарядной станцией нам не нужна, но navigation_launch.py
+# поднимает docking_server всегда и без плагина валит весь запуск целиком
+# («Charging dock plugins not given» -> «Failed to bring up all requested
+# nodes»). Поэтому даём ему штатный плагин и пустой список станций.
+docking_server:
+  ros__parameters:
+    controller_frequency: 10.0
+    dock_plugins: ['simple_charging_dock']
+    simple_charging_dock:
+      plugin: 'opennav_docking::SimpleChargingDock'
+      use_battery_status: false
+      use_external_detection_pose: false
+    # Пустой список YAML отдаёт как «значение не задано», и узел падает с
+    # InvalidParameterValueException. Поэтому одна фиктивная станция.
+    docks: ['dummy_dock']
+    dummy_dock:
+      type: 'simple_charging_dock'
+      frame: 'map'
+      pose: [0.0, 0.0, 0.0]
+    base_frame: "base_footprint"
+    fixed_frame: "odom"
+
+# Менеджер жизненного цикла: запас по времени на подъём.
+#
+# Значения по умолчанию рассчитаны на готовую систему, а здесь Nav2
+# поднимается рядом с Gazebo и RTAB-Map. Даже с отложенным стартом сервер
+# может ответить не сразу, и короткий срок связи роняет весь подъём.
+lifecycle_manager_navigation:
+  ros__parameters:
+    autostart: true
+    bond_timeout: 20.0
+    attempt_respawn_reconnection: true
+    bond_respawn_max_duration: 30.0
