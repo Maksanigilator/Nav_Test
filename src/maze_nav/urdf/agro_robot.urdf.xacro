@@ -1,0 +1,1095 @@
+<?xml version="1.0"?>
+<!-- СГЕНЕРИРОВАНО scripts/gen_robot_urdf.py — руками не править.
+     Геометрия колёс прочитана из CAD-модели, а не выведена формулой:
+     положения и оси роликов взяты как есть, включая направление
+     наклона для каждого колеса. Пересобрать после изменения модели. -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="agro_robot">
+
+  <material name="chassis"><color rgba="0.22 0.23 0.25 1"/></material>
+  <material name="hub"><color rgba="0.15 0.15 0.17 1"/></material>
+  <material name="roller"><color rgba="0.38 0.39 0.42 1"/></material>
+
+  <link name="base_footprint"/>
+  <joint name="base_joint" type="fixed">
+    <parent link="base_footprint"/><child link="base_link"/>
+    <origin xyz="0 0 0.1014"/>
+  </joint>
+
+  <link name="base_link">
+    <inertial>
+      <origin xyz="0 0 0.22"/>
+      <mass value="100.000"/>
+      <inertia ixx="11.0" iyy="16.6" izz="18.5" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.1035" rpy="0 0 -1.570796"/>
+      <geometry><mesh filename="package://maze_nav/meshes/chassis.stl"
+              scale="0.001 0.001 0.001"/></geometry>
+      <material name="chassis"/>
+    </visual>
+    <!-- Коллизия примитивом: меш в 680 тыс. граней убил бы физику -->
+    <collision>
+      <origin xyz="0 0 0.319"/>
+      <geometry><box size="1.2016 0.9228 0.6375"/></geometry>
+    </collision>
+  </link>
+
+  <!-- колесо fl: CAD плоскость X=-355.4, ось Y=317.8, кольцо роликов R=86.0 мм -->
+  <link name="fl_wheel">
+    <inertial>
+      <mass value="4.520"/>
+      <inertia ixx="0.013210" iyy="0.023237" izz="0.013210" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <!-- Визуал — геометрия узла из CAD как есть: ступица, диски
+         и рельсовый ролик с настоящим профилем. Меш уже развёрнут
+         в систему звена при извлечении, поправок не нужно.
+         Ролики меканума сюда НЕ входят: они вращаются отдельно. -->
+    <visual><geometry><mesh
+      filename="package://maze_nav/meshes/wheel_hub_l.stl"
+      scale="0.001 0.001 0.001"/></geometry>
+      <material name="hub"/></visual>
+    <!-- Коллизия рельсового ролика: ДВА цилиндра вместо меша.
+         Профиль с канавкой невыпуклый, а движки быстро считают
+         только выпуклые тела. Пара "дорожка + реборда" — это две
+         выпуклые формы, вместе дающие ступеньку: рельса
+         удерживается сбоку, но соскочить при перекосе можно,
+         а это и есть предмет изучения на заезде.
+         Чего пара не даёт — плавности галтели: переход выйдет
+         ступенькой. Если заезд поведёт себя странно, смотреть сюда. -->
+    <collision><!-- дорожка -->
+      <origin xyz="0 -0.0837 0" rpy="1.570796 0 0"/>
+      <geometry><cylinder radius="0.05" length="0.0423"/></geometry>
+    </collision>
+    <collision><!-- реборда -->
+      <origin xyz="0 -0.0513 0" rpy="1.570796 0 0"/>
+      <geometry><cylinder radius="0.075" length="0.0227"/></geometry>
+    </collision>
+  </link>
+  <joint name="fl_wheel_joint" type="continuous">
+    <parent link="base_link"/><child link="fl_wheel"/>
+    <origin xyz="0.3178 0.3554 0"/>
+    <axis xyz="0 1 0"/>
+    <dynamics damping="0.05" friction="0.0"/>
+  </joint>
+  <link name="fl_roller_0">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="fl_roller_0_joint" type="continuous">
+    <parent link="fl_wheel"/><child link="fl_roller_0"/>
+    <origin xyz="-0.00004 0.00000 0.08600" rpy="-0.785403 1.570796 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="fl_roller_1">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="fl_roller_1_joint" type="continuous">
+    <parent link="fl_wheel"/><child link="fl_roller_1"/>
+    <origin xyz="-0.04303 -0.00000 0.07446" rpy="-0.785403 1.047200 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="fl_roller_2">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="fl_roller_2_joint" type="continuous">
+    <parent link="fl_wheel"/><child link="fl_roller_2"/>
+    <origin xyz="-0.07450 -0.00000 0.04297" rpy="-0.785403 0.523596 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="fl_roller_3">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="fl_roller_3_joint" type="continuous">
+    <parent link="fl_wheel"/><child link="fl_roller_3"/>
+    <origin xyz="-0.08600 -0.00000 -0.00004" rpy="-0.785403 0.000000 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="fl_roller_4">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="fl_roller_4_joint" type="continuous">
+    <parent link="fl_wheel"/><child link="fl_roller_4"/>
+    <origin xyz="-0.07446 -0.00000 -0.04303" rpy="-0.785403 -0.523596 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="fl_roller_5">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="fl_roller_5_joint" type="continuous">
+    <parent link="fl_wheel"/><child link="fl_roller_5"/>
+    <origin xyz="-0.04297 -0.00000 -0.07450" rpy="-0.785403 -1.047200 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="fl_roller_6">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="fl_roller_6_joint" type="continuous">
+    <parent link="fl_wheel"/><child link="fl_roller_6"/>
+    <origin xyz="0.00004 -0.00000 -0.08600" rpy="-0.785403 -1.570796 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="fl_roller_7">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="fl_roller_7_joint" type="continuous">
+    <parent link="fl_wheel"/><child link="fl_roller_7"/>
+    <origin xyz="0.04303 0.00000 -0.07446" rpy="-0.785403 -2.094393 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="fl_roller_8">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="fl_roller_8_joint" type="continuous">
+    <parent link="fl_wheel"/><child link="fl_roller_8"/>
+    <origin xyz="0.07450 0.00000 -0.04297" rpy="-0.785403 -2.617996 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="fl_roller_9">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="fl_roller_9_joint" type="continuous">
+    <parent link="fl_wheel"/><child link="fl_roller_9"/>
+    <origin xyz="0.08600 0.00000 0.00004" rpy="0.785403 -0.000000 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="fl_roller_10">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="fl_roller_10_joint" type="continuous">
+    <parent link="fl_wheel"/><child link="fl_roller_10"/>
+    <origin xyz="0.07446 0.00000 0.04303" rpy="-0.785403 2.617996 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="fl_roller_11">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="fl_roller_11_joint" type="continuous">
+    <parent link="fl_wheel"/><child link="fl_roller_11"/>
+    <origin xyz="0.04297 0.00000 0.07450" rpy="-0.785403 2.094393 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+
+  <!-- колесо fr: CAD плоскость X=355.4, ось Y=317.8, кольцо роликов R=86.2 мм -->
+  <link name="fr_wheel">
+    <inertial>
+      <mass value="4.520"/>
+      <inertia ixx="0.013210" iyy="0.023237" izz="0.013210" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <!-- Визуал — геометрия узла из CAD как есть: ступица, диски
+         и рельсовый ролик с настоящим профилем. Меш уже развёрнут
+         в систему звена при извлечении, поправок не нужно.
+         Ролики меканума сюда НЕ входят: они вращаются отдельно. -->
+    <visual><geometry><mesh
+      filename="package://maze_nav/meshes/wheel_hub_r.stl"
+      scale="0.001 0.001 0.001"/></geometry>
+      <material name="hub"/></visual>
+    <!-- Коллизия рельсового ролика: ДВА цилиндра вместо меша.
+         Профиль с канавкой невыпуклый, а движки быстро считают
+         только выпуклые тела. Пара "дорожка + реборда" — это две
+         выпуклые формы, вместе дающие ступеньку: рельса
+         удерживается сбоку, но соскочить при перекосе можно,
+         а это и есть предмет изучения на заезде.
+         Чего пара не даёт — плавности галтели: переход выйдет
+         ступенькой. Если заезд поведёт себя странно, смотреть сюда. -->
+    <collision><!-- дорожка -->
+      <origin xyz="0 0.0837 0" rpy="1.570796 0 0"/>
+      <geometry><cylinder radius="0.05" length="0.0423"/></geometry>
+    </collision>
+    <collision><!-- реборда -->
+      <origin xyz="0 0.0513 0" rpy="1.570796 0 0"/>
+      <geometry><cylinder radius="0.075" length="0.0227"/></geometry>
+    </collision>
+  </link>
+  <joint name="fr_wheel_joint" type="continuous">
+    <parent link="base_link"/><child link="fr_wheel"/>
+    <origin xyz="0.3178 -0.3554 0"/>
+    <axis xyz="0 1 0"/>
+    <dynamics damping="0.05" friction="0.0"/>
+  </joint>
+  <link name="fr_roller_0">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="fr_roller_0_joint" type="continuous">
+    <parent link="fr_wheel"/><child link="fr_roller_0"/>
+    <origin xyz="-0.00004 -0.00000 0.08600" rpy="-0.785403 -1.570796 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="fr_roller_1">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="fr_roller_1_joint" type="continuous">
+    <parent link="fr_wheel"/><child link="fr_roller_1"/>
+    <origin xyz="0.04297 0.00000 0.07450" rpy="-0.785403 -1.047200 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="fr_roller_2">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="fr_roller_2_joint" type="continuous">
+    <parent link="fr_wheel"/><child link="fr_roller_2"/>
+    <origin xyz="0.07446 0.00000 0.04303" rpy="-0.785403 -0.523596 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="fr_roller_3">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="fr_roller_3_joint" type="continuous">
+    <parent link="fr_wheel"/><child link="fr_roller_3"/>
+    <origin xyz="0.08600 0.00000 0.00004" rpy="-0.785403 0.000000 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="fr_roller_4">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="fr_roller_4_joint" type="continuous">
+    <parent link="fr_wheel"/><child link="fr_roller_4"/>
+    <origin xyz="0.07450 0.00000 -0.04297" rpy="-0.785403 0.523596 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="fr_roller_5">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="fr_roller_5_joint" type="continuous">
+    <parent link="fr_wheel"/><child link="fr_roller_5"/>
+    <origin xyz="0.04303 0.00000 -0.07446" rpy="-0.785403 1.047200 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="fr_roller_6">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="fr_roller_6_joint" type="continuous">
+    <parent link="fr_wheel"/><child link="fr_roller_6"/>
+    <origin xyz="0.00004 0.00000 -0.08600" rpy="-0.785403 1.570796 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="fr_roller_7">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="fr_roller_7_joint" type="continuous">
+    <parent link="fr_wheel"/><child link="fr_roller_7"/>
+    <origin xyz="-0.04297 -0.00000 -0.07450" rpy="-0.785403 2.094393 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="fr_roller_8">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="fr_roller_8_joint" type="continuous">
+    <parent link="fr_wheel"/><child link="fr_roller_8"/>
+    <origin xyz="-0.07446 -0.00000 -0.04303" rpy="-0.785403 2.617996 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="fr_roller_9">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="fr_roller_9_joint" type="continuous">
+    <parent link="fr_wheel"/><child link="fr_roller_9"/>
+    <origin xyz="-0.08600 -0.00000 -0.00004" rpy="-0.785403 3.141593 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="fr_roller_10">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="fr_roller_10_joint" type="continuous">
+    <parent link="fr_wheel"/><child link="fr_roller_10"/>
+    <origin xyz="-0.07450 -0.00000 0.04297" rpy="-0.785403 -2.617996 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="fr_roller_11">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="fr_roller_11_joint" type="continuous">
+    <parent link="fr_wheel"/><child link="fr_roller_11"/>
+    <origin xyz="-0.04303 -0.00000 0.07446" rpy="-0.785403 -2.094393 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+
+  <!-- колесо rl: CAD плоскость X=-355.4, ось Y=-317.8, кольцо роликов R=88.8 мм -->
+  <link name="rl_wheel">
+    <inertial>
+      <mass value="4.520"/>
+      <inertia ixx="0.013210" iyy="0.023237" izz="0.013210" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <!-- Визуал — геометрия узла из CAD как есть: ступица, диски
+         и рельсовый ролик с настоящим профилем. Меш уже развёрнут
+         в систему звена при извлечении, поправок не нужно.
+         Ролики меканума сюда НЕ входят: они вращаются отдельно. -->
+    <visual><geometry><mesh
+      filename="package://maze_nav/meshes/wheel_hub_l.stl"
+      scale="0.001 0.001 0.001"/></geometry>
+      <material name="hub"/></visual>
+    <!-- Коллизия рельсового ролика: ДВА цилиндра вместо меша.
+         Профиль с канавкой невыпуклый, а движки быстро считают
+         только выпуклые тела. Пара "дорожка + реборда" — это две
+         выпуклые формы, вместе дающие ступеньку: рельса
+         удерживается сбоку, но соскочить при перекосе можно,
+         а это и есть предмет изучения на заезде.
+         Чего пара не даёт — плавности галтели: переход выйдет
+         ступенькой. Если заезд поведёт себя странно, смотреть сюда. -->
+    <collision><!-- дорожка -->
+      <origin xyz="0 -0.0837 0" rpy="1.570796 0 0"/>
+      <geometry><cylinder radius="0.05" length="0.0423"/></geometry>
+    </collision>
+    <collision><!-- реборда -->
+      <origin xyz="0 -0.0513 0" rpy="1.570796 0 0"/>
+      <geometry><cylinder radius="0.075" length="0.0227"/></geometry>
+    </collision>
+  </link>
+  <joint name="rl_wheel_joint" type="continuous">
+    <parent link="base_link"/><child link="rl_wheel"/>
+    <origin xyz="-0.3178 0.3554 0"/>
+    <axis xyz="0 1 0"/>
+    <dynamics damping="0.05" friction="0.0"/>
+  </joint>
+  <link name="rl_roller_0">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="rl_roller_0_joint" type="continuous">
+    <parent link="rl_wheel"/><child link="rl_roller_0"/>
+    <origin xyz="0.00004 0.00000 0.08600" rpy="-0.785403 -1.570796 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="rl_roller_1">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="rl_roller_1_joint" type="continuous">
+    <parent link="rl_wheel"/><child link="rl_roller_1"/>
+    <origin xyz="-0.04297 0.00000 0.07450" rpy="-0.785403 -2.094393 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="rl_roller_2">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="rl_roller_2_joint" type="continuous">
+    <parent link="rl_wheel"/><child link="rl_roller_2"/>
+    <origin xyz="-0.07446 -0.00000 0.04303" rpy="-0.785403 -2.617996 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="rl_roller_3">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="rl_roller_3_joint" type="continuous">
+    <parent link="rl_wheel"/><child link="rl_roller_3"/>
+    <origin xyz="-0.08600 -0.00000 0.00004" rpy="-0.785403 3.141593 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="rl_roller_4">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="rl_roller_4_joint" type="continuous">
+    <parent link="rl_wheel"/><child link="rl_roller_4"/>
+    <origin xyz="-0.07450 -0.00000 -0.04297" rpy="-0.785403 2.617996 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="rl_roller_5">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="rl_roller_5_joint" type="continuous">
+    <parent link="rl_wheel"/><child link="rl_roller_5"/>
+    <origin xyz="-0.04303 0.00000 -0.07446" rpy="-0.785403 2.094393 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="rl_roller_6">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="rl_roller_6_joint" type="continuous">
+    <parent link="rl_wheel"/><child link="rl_roller_6"/>
+    <origin xyz="-0.00004 0.00000 -0.08600" rpy="-0.785403 1.570796 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="rl_roller_7">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="rl_roller_7_joint" type="continuous">
+    <parent link="rl_wheel"/><child link="rl_roller_7"/>
+    <origin xyz="0.04297 0.00000 -0.07450" rpy="-0.785403 1.047200 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="rl_roller_8">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="rl_roller_8_joint" type="continuous">
+    <parent link="rl_wheel"/><child link="rl_roller_8"/>
+    <origin xyz="0.07446 -0.00000 -0.04303" rpy="-0.785403 0.523596 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="rl_roller_9">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="rl_roller_9_joint" type="continuous">
+    <parent link="rl_wheel"/><child link="rl_roller_9"/>
+    <origin xyz="0.08600 0.00000 -0.00004" rpy="-0.785403 0.000000 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="rl_roller_10">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="rl_roller_10_joint" type="continuous">
+    <parent link="rl_wheel"/><child link="rl_roller_10"/>
+    <origin xyz="0.07450 0.00000 0.04297" rpy="-0.785403 -0.523596 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="rl_roller_11">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="rl_roller_11_joint" type="continuous">
+    <parent link="rl_wheel"/><child link="rl_roller_11"/>
+    <origin xyz="0.04303 0.00000 0.07446" rpy="-0.785403 -1.047200 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+
+  <!-- колесо rr: CAD плоскость X=355.4, ось Y=-317.8, кольцо роликов R=88.3 мм -->
+  <link name="rr_wheel">
+    <inertial>
+      <mass value="4.520"/>
+      <inertia ixx="0.013210" iyy="0.023237" izz="0.013210" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <!-- Визуал — геометрия узла из CAD как есть: ступица, диски
+         и рельсовый ролик с настоящим профилем. Меш уже развёрнут
+         в систему звена при извлечении, поправок не нужно.
+         Ролики меканума сюда НЕ входят: они вращаются отдельно. -->
+    <visual><geometry><mesh
+      filename="package://maze_nav/meshes/wheel_hub_r.stl"
+      scale="0.001 0.001 0.001"/></geometry>
+      <material name="hub"/></visual>
+    <!-- Коллизия рельсового ролика: ДВА цилиндра вместо меша.
+         Профиль с канавкой невыпуклый, а движки быстро считают
+         только выпуклые тела. Пара "дорожка + реборда" — это две
+         выпуклые формы, вместе дающие ступеньку: рельса
+         удерживается сбоку, но соскочить при перекосе можно,
+         а это и есть предмет изучения на заезде.
+         Чего пара не даёт — плавности галтели: переход выйдет
+         ступенькой. Если заезд поведёт себя странно, смотреть сюда. -->
+    <collision><!-- дорожка -->
+      <origin xyz="0 0.0837 0" rpy="1.570796 0 0"/>
+      <geometry><cylinder radius="0.05" length="0.0423"/></geometry>
+    </collision>
+    <collision><!-- реборда -->
+      <origin xyz="0 0.0513 0" rpy="1.570796 0 0"/>
+      <geometry><cylinder radius="0.075" length="0.0227"/></geometry>
+    </collision>
+  </link>
+  <joint name="rr_wheel_joint" type="continuous">
+    <parent link="base_link"/><child link="rr_wheel"/>
+    <origin xyz="-0.3178 -0.3554 0"/>
+    <axis xyz="0 1 0"/>
+    <dynamics damping="0.05" friction="0.0"/>
+  </joint>
+  <link name="rr_roller_0">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="rr_roller_0_joint" type="continuous">
+    <parent link="rr_wheel"/><child link="rr_roller_0"/>
+    <origin xyz="0.00004 0.00000 0.08600" rpy="-0.785403 1.570796 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="rr_roller_1">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="rr_roller_1_joint" type="continuous">
+    <parent link="rr_wheel"/><child link="rr_roller_1"/>
+    <origin xyz="0.04303 0.00000 0.07446" rpy="-0.785403 2.094393 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="rr_roller_2">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="rr_roller_2_joint" type="continuous">
+    <parent link="rr_wheel"/><child link="rr_roller_2"/>
+    <origin xyz="0.07450 0.00000 0.04297" rpy="-0.785403 2.617996 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="rr_roller_3">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="rr_roller_3_joint" type="continuous">
+    <parent link="rr_wheel"/><child link="rr_roller_3"/>
+    <origin xyz="0.08600 0.00000 -0.00004" rpy="0.785403 -0.000000 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="rr_roller_4">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="rr_roller_4_joint" type="continuous">
+    <parent link="rr_wheel"/><child link="rr_roller_4"/>
+    <origin xyz="0.07446 0.00000 -0.04303" rpy="-0.785403 -2.617996 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="rr_roller_5">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="rr_roller_5_joint" type="continuous">
+    <parent link="rr_wheel"/><child link="rr_roller_5"/>
+    <origin xyz="0.04297 0.00000 -0.07450" rpy="-0.785403 -2.094393 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="rr_roller_6">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="rr_roller_6_joint" type="continuous">
+    <parent link="rr_wheel"/><child link="rr_roller_6"/>
+    <origin xyz="-0.00004 -0.00000 -0.08600" rpy="-0.785403 -1.570796 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="rr_roller_7">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="rr_roller_7_joint" type="continuous">
+    <parent link="rr_wheel"/><child link="rr_roller_7"/>
+    <origin xyz="-0.04303 -0.00000 -0.07446" rpy="-0.785403 -1.047200 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="rr_roller_8">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="rr_roller_8_joint" type="continuous">
+    <parent link="rr_wheel"/><child link="rr_roller_8"/>
+    <origin xyz="-0.07450 -0.00000 -0.04297" rpy="-0.785403 -0.523596 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="rr_roller_9">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="rr_roller_9_joint" type="continuous">
+    <parent link="rr_wheel"/><child link="rr_roller_9"/>
+    <origin xyz="-0.08600 -0.00000 0.00004" rpy="-0.785403 0.000000 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="rr_roller_10">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="rr_roller_10_joint" type="continuous">
+    <parent link="rr_wheel"/><child link="rr_roller_10"/>
+    <origin xyz="-0.07446 -0.00000 0.04303" rpy="-0.785403 0.523596 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+  <link name="rr_roller_11">
+    <inertial>
+      <mass value="0.04"/>
+      <inertia ixx="0.00001647" iyy="0.00001647" izz="0.00000477" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry><material name="roller"/></visual>
+    <collision><geometry><mesh filename="package://maze_nav/meshes/mec_roller.stl" scale="0.001 0.001 0.001"/></geometry></collision>
+  </link>
+  <joint name="rr_roller_11_joint" type="continuous">
+    <parent link="rr_wheel"/><child link="rr_roller_11"/>
+    <origin xyz="-0.04297 -0.00000 0.07450" rpy="-0.785403 1.047200 0.000000"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.0001" friction="0.0"/>
+  </joint>
+
+  <!-- Приводы получают ТОЛЬКО четыре шарнира колёс.
+       48 роликов меканума остаются свободными: их вращает контакт
+       с полом, и именно поэтому боковое движение возникает
+       из физики, а не рисуется кинематикой. -->
+  <ros2_control name="GazeboSystem" type="system">
+    <hardware>
+      <plugin>gz_ros2_control/GazeboSimSystem</plugin>
+    </hardware>
+    <joint name="fl_wheel_joint">
+      <!-- Мотор-колесо с редуктором управляется скоростью,
+           поэтому командный интерфейс velocity, а не effort:
+           иначе поведение на проскальзывании будет непохожим. -->
+      <command_interface name="velocity">
+        <param name="min">-20.0</param>
+        <param name="max">20.0</param>
+      </command_interface>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="fr_wheel_joint">
+      <!-- Мотор-колесо с редуктором управляется скоростью,
+           поэтому командный интерфейс velocity, а не effort:
+           иначе поведение на проскальзывании будет непохожим. -->
+      <command_interface name="velocity">
+        <param name="min">-20.0</param>
+        <param name="max">20.0</param>
+      </command_interface>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="rl_wheel_joint">
+      <!-- Мотор-колесо с редуктором управляется скоростью,
+           поэтому командный интерфейс velocity, а не effort:
+           иначе поведение на проскальзывании будет непохожим. -->
+      <command_interface name="velocity">
+        <param name="min">-20.0</param>
+        <param name="max">20.0</param>
+      </command_interface>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="rr_wheel_joint">
+      <!-- Мотор-колесо с редуктором управляется скоростью,
+           поэтому командный интерфейс velocity, а не effort:
+           иначе поведение на проскальзывании будет непохожим. -->
+      <command_interface name="velocity">
+        <param name="min">-20.0</param>
+        <param name="max">20.0</param>
+      </command_interface>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+  </ros2_control>
+
+  <gazebo>
+    <plugin filename="gz_ros2_control-system"
+            name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+      <parameters>$(find maze_nav)/params/agro_controllers.yaml</parameters>
+    </plugin>
+  </gazebo>
+  <gazebo reference="fl_roller_0">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="fl_roller_1">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="fl_roller_2">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="fl_roller_3">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="fl_roller_4">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="fl_roller_5">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="fl_roller_6">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="fl_roller_7">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="fl_roller_8">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="fl_roller_9">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="fl_roller_10">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="fl_roller_11">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="fl_wheel">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="fr_roller_0">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="fr_roller_1">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="fr_roller_2">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="fr_roller_3">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="fr_roller_4">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="fr_roller_5">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="fr_roller_6">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="fr_roller_7">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="fr_roller_8">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="fr_roller_9">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="fr_roller_10">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="fr_roller_11">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="fr_wheel">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="rl_roller_0">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="rl_roller_1">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="rl_roller_2">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="rl_roller_3">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="rl_roller_4">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="rl_roller_5">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="rl_roller_6">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="rl_roller_7">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="rl_roller_8">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="rl_roller_9">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="rl_roller_10">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="rl_roller_11">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="rl_wheel">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="rr_roller_0">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="rr_roller_1">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="rr_roller_2">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="rr_roller_3">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="rr_roller_4">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="rr_roller_5">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="rr_roller_6">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="rr_roller_7">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="rr_roller_8">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="rr_roller_9">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="rr_roller_10">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="rr_roller_11">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="rr_wheel">
+    <mu1>1.0</mu1><mu2>1.0</mu2>
+  </gazebo>
+  <gazebo reference="base_link">
+    <mu1>0.2</mu1><mu2>0.2</mu2>
+  </gazebo>
+
+  <link name="camera_link"/>
+  <joint name="camera_joint" type="fixed">
+    <parent link="base_link"/><child link="camera_link"/>
+    <origin xyz="0.60 0 0.63"/>
+  </joint>
+  <link name="camera_depth_optical_frame"/>
+  <joint name="camera_optical_joint" type="fixed">
+    <parent link="camera_link"/><child link="camera_depth_optical_frame"/>
+    <origin rpy="-1.570796 0 -1.570796"/>
+  </joint>
+  <link name="imu_link"/>
+  <joint name="imu_joint" type="fixed">
+    <parent link="base_link"/><child link="imu_link"/><origin xyz="0 0 0"/>
+  </joint>
+</robot>

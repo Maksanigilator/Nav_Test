@@ -29,3 +29,9 @@ datasets/
 #   ./isaac/fetch_env.py office
 isaac/assets/turtlebot3_waffle/
 isaac/assets/environments/
+
+# Исходная CAD-модель робота (STEP, ~65 МБ). В git не кладём: она нужна
+# только чтобы ПЕРЕСОБРАТЬ меши, а для запуска симулятора хватает готовых
+# .stl в src/maze_nav/meshes/. Команды пересборки — в RUN.md, этап 4.
+*.step
+*.STEP

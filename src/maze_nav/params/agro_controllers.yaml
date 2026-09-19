@@ -1,0 +1,76 @@
+# Контроллеры ros2_control для меканум-робота.
+#
+# Числа геометрии взяты из обмера CAD, а не из паспорта:
+#   колея  710.8 мм -> полуколея 0.3554
+#   база   635.6 мм -> полубаза  0.3178
+#   радиус колеса 101.4 мм (кольцо роликов 86 + бочка 15.45)
+
+controller_manager:
+  ros__parameters:
+    update_rate: 100
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+    mecanum_drive_controller:
+      type: mecanum_drive_controller/MecanumDriveController
+
+mecanum_drive_controller:
+  ros__parameters:
+    # Имена параметров у этого контроллера нестандартные — проверены
+    # по самой библиотеке, а не взяты по аналогии с diff_drive.
+    #
+    # Соответствие прямое, и оно верно ТОЛЬКО для раскладки роликов
+    # standard (см. scripts/gen_robot_urdf.py, ключ --roller-layout).
+    #
+    # Контроллер зашит под одну руку роликов. В STEP-модели рука обратная,
+    # и при ней плечо разворота равно РАЗНОСТИ полубазы и полуколеи —
+    # 3.8 см вместо 67 см. Робот с такими колёсами разворачивается юзом,
+    # поэтому URDF по умолчанию генерируется зеркально к CAD.
+    #
+    # Если робот на железе всё-таки собран как в CAD, надо:
+    #   1) генерировать URDF с --roller-layout cad;
+    #   2) переставить здесь перёд и зад местами:
+    #      front_left  -> rl_wheel_joint,  front_right -> rr_wheel_joint,
+    #      rear_left   -> fl_wheel_joint,  rear_right  -> fr_wheel_joint.
+    #   Одометрия при такой перестановке остаётся правильной: робот
+    #   симметричен, а база и колея входят в формулу только суммой.
+    front_left_wheel_command_joint_name:  fl_wheel_joint
+    front_right_wheel_command_joint_name: fr_wheel_joint
+    rear_left_wheel_command_joint_name:   rl_wheel_joint
+    rear_right_wheel_command_joint_name:  rr_wheel_joint
+
+    kinematics:
+      base_frame_offset: {x: 0.0, y: 0.0, theta: 0.0}
+      # Сумма полубазы и полуколеи: 0.3178 + 0.3554. Именно сумма, а не
+      # два отдельных размера — так устроена матрица пересчёта меканума,
+      # в неё эти расстояния входят только вместе.
+      sum_of_robot_center_projection_on_X_Y_axis: 0.6732
+      # Радиус МЕКАНУМА. На рельсе робот катится дорожкой радиусом 50 мм,
+      # и здесь это число станет неверным ровно вдвое: контроллер решит,
+      # что робот едет быстрее, чем на самом деле. Лечится переключением
+      # режима при заезде, а не подстройкой этого параметра.
+      wheels_radius: 0.1014
+
+    base_frame_id: base_link
+    odom_frame_id: odom
+    # Одометрию по колёсам мы НЕ используем для навигации: на рельсе она
+    # врёт предсказуемо сильно. Публикуется только для отладки, TF от неё
+    # не берём — map->odom и odom->base даёт RTAB-Map.
+    enable_odom_tf: false
+    reference_timeout: 0.5
+
+    pose_covariance_diagonal:  [0.001, 0.001, 0.001, 0.001, 0.001, 0.01]
+    twist_covariance_diagonal: [0.001, 0.001, 0.001, 0.001, 0.001, 0.01]
+
+joint_state_broadcaster:
+  ros__parameters:
+    # 48 роликов меканума в состояние НЕ публикуем: они свободные,
+    # их вращает контакт с полом, и заваливать /joint_states полусотней
+    # ненужных величин на 100 Гц незачем. Нужны только приводы.
+    joints:
+      - fl_wheel_joint
+      - fr_wheel_joint
+      - rl_wheel_joint
+      - rr_wheel_joint
+    interfaces:
+      - position
+      - velocity

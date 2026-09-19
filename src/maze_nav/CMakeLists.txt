@@ -6,7 +6,7 @@ find_package(ament_cmake REQUIRED)
 # Пакет без кода: только данные. Их надо положить в share/,
 # чтобы launch-файлы находили их через get_package_share_directory().
 install(
-  DIRECTORY launch worlds models maps params scripts behavior_trees rviz
+  DIRECTORY launch worlds models maps params scripts behavior_trees rviz urdf meshes
   DESTINATION share/${PROJECT_NAME}
 )
 
@@ -17,6 +17,7 @@ install(
 install(PROGRAMS
   scripts/imu_noise.py
   scripts/depth_noise.py
+  scripts/twist_to_stamped.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
