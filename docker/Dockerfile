@@ -48,6 +48,10 @@ RUN apt-get update && apt-get install -y \
     ros-jazzy-imu-filter-madgwick \
     ros-jazzy-image-transport-plugins \
     ros-jazzy-pointcloud-to-laserscan \
+    ros-jazzy-ros2-control \
+    ros-jazzy-ros2-controllers \
+    ros-jazzy-gz-ros2-control \
+    ros-jazzy-mecanum-drive-controller \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
 #rtabmap-ros = RGB-D SLAM: даёт /map и map->odom вместо связки map_server+AMCL,
@@ -71,11 +75,28 @@ RUN apt-get update && apt-get install -y \
 # см. scripts/realsense_bag_to_ros2.py и RTABMAP.md.
 RUN pip3 install --no-cache-dir --break-system-packages rosbags evo pyrealsense2
 
-RUN sh -c "$(curl -fsSL https://github.com/deluan/zsh-in-docker/releases/download/v1.1.5/zsh-in-docker.sh)" -- \
-    -t bira \
-    -p git \
-    -p https://github.com/zsh-users/zsh-autosuggestions \
-    -p https://github.com/zsh-users/zsh-completions
+# Скачиваем В ФАЙЛ, а не в подстановку команды.
+#
+# Канонический рецепт `sh -c "$(curl -fsSL ...)"` молча проглатывает сбой
+# сети: curl с -f отдаёт пустоту, sh послушно выполняет пустой скрипт и
+# возвращает НОЛЬ, сборка идёт дальше как ни в чём не бывало. Именно так
+# один раз и вышло: образ собрался «успешно», но oh-my-zsh в нём не было
+# вовсе, и в контейнере встречал голый промпт вместо темы bira.
+# Отдельным -o файлом curl падает с ненулевым кодом, и сборка встаёт.
+#
+# Проверка после установки — не паранойя: скрипт может отработать
+# наполовину (тема скачалась, плагины нет), и это тоже надо ловить здесь,
+# а не обнаруживать потом в живом контейнере.
+RUN curl -fsSL -o /tmp/zsh-in-docker.sh \
+      https://github.com/deluan/zsh-in-docker/releases/download/v1.1.5/zsh-in-docker.sh \
+    && sh /tmp/zsh-in-docker.sh \
+        -t bira \
+        -p git \
+        -p https://github.com/zsh-users/zsh-autosuggestions \
+        -p https://github.com/zsh-users/zsh-completions \
+    && rm /tmp/zsh-in-docker.sh \
+    && test -d /root/.oh-my-zsh \
+    && grep -q 'ZSH_THEME="bira"' /root/.zshrc
 
 RUN for c in register-python-argcomplete3 register-python-argcomplete; do \
       echo "if command -v $c >/dev/null 2>&1; then eval \"\$($c ros2)\"; eval \"\$($c colcon)\"; fi" >> ~/.zshrc; \
@@ -120,7 +141,16 @@ RUN echo "source /opt/ros/jazzy/setup.zsh" >> ~/.zshrc && \
 # build/install/.gz появятся root-овскими, том окажется недоступен на запись,
 # и colcon build упадёт с отказом в доступе.
 RUN mkdir -p /root/ros_ws/src /root/ros_ws/build /root/ros_ws/install /root/.gz \
-    && chmod -R a+rwX /root
+    && chmod -R a+rwX /root \
+    `# А вот каталоги дополнений zsh открывать всем НЕЛЬЗЯ. Строкой выше` \
+    `# они тоже стали доступны на запись, и zsh при каждом входе спрашивает` \
+    `# "insecure directories ... abort compinit [n]?". Ответа он не получает,` \
+    `# дополнения не поднимаются, а следом падает register-python-argcomplete` \
+    `# с "command not found: compdef" — то есть пропадает и дополнение ros2.` \
+    `# Писать в них некому: под рабочим пользователем они только читаются.` \
+    `# Владельцем оставляем root — так compaudit доволен при ЛЮБОМ UID,` \
+    `# а не только при 1000.` \
+    && chmod -R go-w /root/.oh-my-zsh
 #/root по умолчанию 700 — под другим UID туда не попасть вовсе, а там лежат
 #и рабочее пространство, и настройки zsh с oh-my-zsh, которые оболочка читает
 #при каждом входе. HOME=/root контейнеру задаёт run.sh.
