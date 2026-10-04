@@ -27,6 +27,7 @@ import time
 
 import numpy as np
 import rclpy
+import rclpy.signals
 import sensor_msgs_py.point_cloud2 as pc2
 import tf2_ros
 from geometry_msgs.msg import Twist
@@ -73,7 +74,16 @@ class RailEntry(Node):
         # вперёд и назад робот идёт по слегка разным дугам.
         p('retreat_margin', 0.15)
 
-        self.cmd = self.create_publisher(Twist, 'cmd_vel', 10)
+        # ПО УМОЛЧАНИЮ ПУБЛИКУЕМ В cmd_nav, а не в cmd_vel.
+        #
+        # На настоящем роботе /cmd_vel — это ВЫХОД мультиплексора, который
+        # идёт прямо на моторы. Писать туда значит обойти и мультиплексор,
+        # и кнопку X на геймпаде, и вдобавок драться с ним: он публикует
+        # туда 20 раз в секунду, и команды перемешались бы.
+        #
+        # /cmd_nav же он слушает и пропускает только в режиме auto, то
+        # есть после осознанного нажатия кнопки. Это и есть защита.
+        self.cmd = self.create_publisher(Twist, 'cmd_nav', 10)
         self.create_subscription(Odometry, 'odom', self.on_odom, 20)
         self.create_subscription(Imu, 'imu', self.on_imu, 20)
         self.create_subscription(PointCloud2, 'obstacles', self.on_cloud, 5)
@@ -452,15 +462,30 @@ class RailEntry(Node):
 
 
 def main():
-    rclpy.init()
+    # Сигналы перехватываем САМИ, не отдавая их rclpy.
+    #
+    # По умолчанию rclpy по Ctrl-C гасит контекст немедленно, и наш
+    # finally с остановкой падает: «publisher's context is invalid».
+    # Нулевая команда при этом не уходит, а мультиплексор на роботе
+    # продолжает слать последнюю принятую скорость по 20 раз в секунду —
+    # робот после Ctrl-C так и остаётся ехать. Поэтому контекст живёт до
+    # тех пор, пока мы не отправим ноль своими руками.
+    rclpy.init(signal_handler_options=rclpy.signals.SignalHandlerOptions.NO)
     n = RailEntry()
     try:
         n.run()
     except KeyboardInterrupt:
-        pass
+        print()
     finally:
-        n.stop()
+        try:
+            n.stop()
+        except Exception:
+            pass
         n.destroy_node()
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == '__main__':

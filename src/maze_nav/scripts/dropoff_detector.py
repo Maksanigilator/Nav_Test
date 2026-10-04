@@ -54,6 +54,31 @@ class DropoffDetector(Node):
         # и ниже габарита робота, чтобы слой точно её принял.
         self.declare_parameter('virtual_height', 0.30)
         self.declare_parameter('max_range', 3.0)
+        # ── Опорная плоскость: из данных, а не из URDF ──
+        #
+        # Исходно плоскостью служил z=0 кадра base_footprint, то есть
+        # положение камеры целиком бралось из URDF. В симуляторе URDF и
+        # есть истина, и это работало. На живом роботе камеру крепят
+        # руками: замерено на стенде — в URDF записан наклон 45 градусов,
+        # а фактический оказался около 50, и этих пяти градусов хватило,
+        # чтобы настил высотой 10 см лёг на -1 см вместо -10 и не прошёл
+        # порог обрыва. Детектор при этом молчал совершенно исправно:
+        # точки были, перелёта не было.
+        #
+        # Поэтому плоскость подгоняем по ближней земле под роботом в
+        # каждом кадре. Это снимает заодно и крен от подвески, который
+        # при камере на крыше даёт на двух метрах те же сантиметры.
+        self.declare_parameter('ground_fit', True)
+        # Радиус участка под роботом, по которому подгоняем. Должен быть
+        # заведомо меньше расстояния до кромки, иначе в оценку попадёт
+        # нижний уровень и плоскость наклонится к нему.
+        self.declare_parameter('ground_fit_range', 1.1)
+        # Насколько далеко от плоскости URDF ещё ищем землю.
+        self.declare_parameter('ground_fit_band', 0.25)
+        # Предохранитель: поправка больше этой — значит подгонка села на
+        # что-то, что землёй не является, и лучше остаться на URDF.
+        self.declare_parameter('ground_fit_max_tilt', 15.0)
+        self.declare_parameter('ground_fit_max_shift', 0.30)
         # Дальность облака, уходящего в сетку занятости. Меньше общей
         # намеренно: порог сетки «выше пола» постоянный, 30 мм, а шум
         # дальномера растёт как квадрат дальности и на трёх метрах даёт
@@ -204,7 +229,18 @@ class DropoffDetector(Node):
         drop = float(self.get_parameter('drop_threshold').value)
         h = float(self.get_parameter('virtual_height').value)
 
-        d = np.frombuffer(m.data, np.float32).reshape(m.height, m.width)[::step, ::step]
+        # Глубина приходит в двух видах, и это не мелочь. Gazebo отдаёт
+        # 32FC1 в МЕТРАХ, а настоящий реалсенс — 16UC1 в МИЛЛИМЕТРАХ.
+        # Разобрать второе как первое означает прочитать пары соседних
+        # пикселей как одно число с плавающей точкой: получится мусор, но
+        # мусор правдоподобного размера, и ошибка вылезет не сразу.
+        if m.encoding == '16UC1':
+            d = (np.frombuffer(m.data, np.uint16)
+                 .reshape(m.height, m.width)[::step, ::step]
+                 .astype(np.float32) * 0.001)
+        else:
+            d = np.frombuffer(m.data, np.float32).reshape(
+                m.height, m.width)[::step, ::step]
         fx, fy, cx, cy = self.k
         uu, vv = np.meshgrid((np.arange(0, m.width, step) - cx) / fx,
                              (np.arange(0, m.height, step) - cy) / fy)
@@ -221,6 +257,19 @@ class DropoffDetector(Node):
         dopt = np.stack([uu, vv, np.ones_like(uu)], -1)
         dirs = dopt @ R.T
         P = (dopt * d[..., None]) @ R.T + O
+
+        # Плоскость меряем, а не берём на веру (см. ground_fit выше).
+        if bool(self.get_parameter('ground_fit').value):
+            C, c = self.fit_ground(P, ok)
+            if C is not None:
+                # Поворот C кладёт измеренную землю горизонтально, сдвиг c
+                # опускает её на нуль. Переносим поправку в саму позу
+                # камеры, и весь дальнейший счёт — перелёт луча, высоты,
+                # сетка — идёт уже относительно настоящей земли.
+                R = C @ R
+                O = C @ O - np.array([0.0, 0.0, c])
+                dirs = dopt @ R.T
+                P = (dopt * d[..., None]) @ R.T + O
 
         k_over = float(self.get_parameter('overshoot_k').value)
         floor_m = float(self.get_parameter('overshoot_min').value)
@@ -462,6 +511,69 @@ class DropoffDetector(Node):
             if len(edge) else np.zeros((0, 3), np.float32)
         self.publish(out, m.header.stamp)
 
+
+    def fit_ground(self, P, ok):
+        """Опорная плоскость по ближней земле под роботом.
+
+        Возвращает поворот C, кладущий найденную землю горизонтально, и
+        высоту c, на которую её после этого надо опустить до нуля. Если
+        земли в кадре не видно или поправка вышла неправдоподобной,
+        возвращает (None, 0) — тогда остаёмся на плоскости из URDF.
+        """
+        rng = float(self.get_parameter('ground_fit_range').value)
+        band = float(self.get_parameter('ground_fit_band').value)
+        r = np.hypot(P[..., 0], P[..., 1])
+        sel = ok & (r < rng) & (np.abs(P[..., 2]) < band)
+        if sel.sum() < 500:
+            return None, 0.0
+        G = P[sel]
+
+        # Затравка по медиане высоты, а не сразу МНК. Если робот стоит у
+        # самой кромки, в выборку попадает и нижний уровень; МНК по такой
+        # смеси наклонит плоскость к обрыву, а медиана держится того
+        # уровня, на котором робот стоит, пока его точек больше половины.
+        z0 = np.median(G[:, 2])
+        G = G[np.abs(G[:, 2] - z0) < 0.05]
+        if len(G) < 300:
+            return None, 0.0
+
+        A = np.c_[G[:, 0], G[:, 1], np.ones(len(G))]
+        coef = None
+        for _ in range(2):
+            coef = np.linalg.lstsq(A, G[:, 2], rcond=None)[0]
+            keep = np.abs(G[:, 2] - A @ coef) < 0.03
+            if keep.sum() < 300:
+                break
+            G, A = G[keep], A[keep]
+        a, b, c0 = (float(v) for v in coef)
+
+        # z = a x + b y + c  ->  нормаль (-a, -b, 1).
+        nv = np.array([-a, -b, 1.0])
+        nn = float(np.linalg.norm(nv))
+        nv /= nn
+        c = c0 / nn
+        tilt = math.degrees(math.acos(min(1.0, max(-1.0, float(nv[2])))))
+        if tilt > float(self.get_parameter('ground_fit_max_tilt').value) or \
+                abs(c) > float(self.get_parameter('ground_fit_max_shift').value):
+            self.get_logger().warn(
+                f'подгонка земли отвергнута: наклон {tilt:.1f} град, '
+                f'сдвиг {c * 100:+.0f} см — остаюсь на URDF',
+                throttle_duration_sec=5.0)
+            return None, 0.0
+
+        # Поворот, совмещающий нормаль с вертикалью (формула Родрига).
+        v = np.cross(nv, (0.0, 0.0, 1.0))
+        sn = float(np.linalg.norm(v))
+        if sn < 1e-9:
+            C = np.eye(3)
+        else:
+            K = np.array([[0.0, -v[2], v[1]],
+                          [v[2], 0.0, -v[0]],
+                          [-v[1], v[0], 0.0]])
+            C = np.eye(3) + K + K @ K * ((1.0 - float(nv[2])) / sn ** 2)
+        self._ground = (tilt, c)
+        return C, c
+
     def edge_by_ray(self, dirs, depth, O, k=0.010, floor_m=0.03):
         """Кромка там, где луч перестал попадать в опорную плоскость.
 
@@ -496,9 +608,12 @@ class DropoffDetector(Node):
     def report(self, P, low):
         """Раз в пять секунд говорим, что вообще видим. Без этого молчащий
         детектор неотличим от сломанного."""
+        g = getattr(self, '_ground', None)
+        fit = (f', земля подогнана: наклон {g[0]:.1f} град, сдвиг {g[1] * 100:+.0f} см'
+               if g else ', земля по URDF')
         self.get_logger().info(
             f'точек {len(P)}, высота {P[:, 2].min():+.2f}..{P[:, 2].max():+.2f} м, '
-            f'ниже порога {int(low.sum())}', throttle_duration_sec=5.0)
+            f'ниже порога {int(low.sum())}{fit}', throttle_duration_sec=5.0)
 
     @staticmethod
     def cell_median(G, cell):

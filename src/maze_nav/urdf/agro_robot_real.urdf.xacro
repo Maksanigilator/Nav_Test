@@ -922,270 +922,32 @@
        48 роликов меканума остаются свободными: их вращает контакт
        с полом, и именно поэтому боковое движение возникает
        из физики, а не рисуется кинематикой. -->
-  <ros2_control name="GazeboSystem" type="system">
-    <hardware>
-      <plugin>gz_ros2_control/GazeboSimSystem</plugin>
-    </hardware>
-    <joint name="fl_wheel_joint">
-      <!-- Мотор-колесо с редуктором управляется скоростью,
-           поэтому командный интерфейс velocity, а не effort:
-           иначе поведение на проскальзывании будет непохожим. -->
-      <command_interface name="velocity">
-        <param name="min">-20.0</param>
-        <param name="max">20.0</param>
-      </command_interface>
-      <state_interface name="position"/>
-      <state_interface name="velocity"/>
-    </joint>
-    <joint name="fr_wheel_joint">
-      <!-- Мотор-колесо с редуктором управляется скоростью,
-           поэтому командный интерфейс velocity, а не effort:
-           иначе поведение на проскальзывании будет непохожим. -->
-      <command_interface name="velocity">
-        <param name="min">-20.0</param>
-        <param name="max">20.0</param>
-      </command_interface>
-      <state_interface name="position"/>
-      <state_interface name="velocity"/>
-    </joint>
-    <joint name="rl_wheel_joint">
-      <!-- Мотор-колесо с редуктором управляется скоростью,
-           поэтому командный интерфейс velocity, а не effort:
-           иначе поведение на проскальзывании будет непохожим. -->
-      <command_interface name="velocity">
-        <param name="min">-20.0</param>
-        <param name="max">20.0</param>
-      </command_interface>
-      <state_interface name="position"/>
-      <state_interface name="velocity"/>
-    </joint>
-    <joint name="rr_wheel_joint">
-      <!-- Мотор-колесо с редуктором управляется скоростью,
-           поэтому командный интерфейс velocity, а не effort:
-           иначе поведение на проскальзывании будет непохожим. -->
-      <command_interface name="velocity">
-        <param name="min">-20.0</param>
-        <param name="max">20.0</param>
-      </command_interface>
-      <state_interface name="position"/>
-      <state_interface name="velocity"/>
-    </joint>
-  </ros2_control>
 
-  <gazebo>
-    <plugin filename="gz_ros2_control-system"
-            name="gz_ros2_control::GazeboSimROS2ControlPlugin">
-      <parameters>$(find maze_nav)/params/agro_controllers.yaml</parameters>
-    </plugin>
-  </gazebo>
-  <gazebo reference="fl_roller_0">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="fl_roller_1">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="fl_roller_2">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="fl_roller_3">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="fl_roller_4">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="fl_roller_5">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="fl_roller_6">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="fl_roller_7">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="fl_roller_8">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="fl_roller_9">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="fl_roller_10">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="fl_roller_11">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="fl_wheel">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="fr_roller_0">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="fr_roller_1">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="fr_roller_2">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="fr_roller_3">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="fr_roller_4">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="fr_roller_5">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="fr_roller_6">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="fr_roller_7">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="fr_roller_8">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="fr_roller_9">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="fr_roller_10">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="fr_roller_11">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="fr_wheel">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="rl_roller_0">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="rl_roller_1">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="rl_roller_2">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="rl_roller_3">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="rl_roller_4">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="rl_roller_5">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="rl_roller_6">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="rl_roller_7">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="rl_roller_8">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="rl_roller_9">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="rl_roller_10">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="rl_roller_11">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="rl_wheel">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="rr_roller_0">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="rr_roller_1">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="rr_roller_2">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="rr_roller_3">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="rr_roller_4">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="rr_roller_5">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="rr_roller_6">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="rr_roller_7">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="rr_roller_8">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="rr_roller_9">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="rr_roller_10">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="rr_roller_11">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="rr_wheel">
-    <mu1>1.0</mu1><mu2>1.0</mu2>
-  </gazebo>
-  <gazebo reference="base_link">
-    <mu1>0.2</mu1><mu2>0.2</mu2>
-  </gazebo>
 
 
   <!-- Кронштейн: от профиля крыши ВПЕРЁД, горизонтально.
        Наклон живёт отдельно, в camera_link, чтобы менять его одной
        константой, не трогая вынос. -->
   <link name="camera_mount_link">
-    <visual><origin xyz="-0.0500 0 0" rpy="0 1.570796 0"/>
-      <geometry><cylinder radius="0.012" length="0.1"/></geometry>
+    <visual><origin xyz="-0.0400 0 0" rpy="0 1.570796 0"/>
+      <geometry><cylinder radius="0.012" length="0.08"/></geometry>
       <material name="hub"/></visual>
   </link>
   <joint name="camera_mount_joint" type="fixed">
     <parent link="base_link"/><child link="camera_mount_link"/>
-    <origin xyz="0.5000 0.0 0.6147"/>
+    <origin xyz="0.4905 0.0 0.6747000000000001"/>
   </joint>
 
-  <!-- D435, наклон 30° вниз -->
+  <!-- D435, наклон 45° вниз -->
   <link name="camera_link">
     <visual><geometry><box size="0.025 0.090 0.025"/></geometry>
       <material name="hub"/></visual>
   </link>
   <joint name="camera_joint" type="fixed">
     <parent link="camera_mount_link"/><child link="camera_link"/>
-    <origin rpy="0 0.523599 0"/>
-  </joint>
-  <!-- Оптический кадр: z вперёд, x вправо, y вниз — как в ROS.
-       Именно его имя должно стоять в gz_frame_id ниже, иначе
-       Gazebo проштампует снимки составным именем вида
-       model/link/sensor, которого нет в TF, и SLAM развалится. -->
-  <link name="camera_depth_optical_frame"/>
-  <joint name="camera_optical_joint" type="fixed">
-    <parent link="camera_link"/><child link="camera_depth_optical_frame"/>
-    <origin rpy="-1.570796 0 -1.570796"/>
+    <origin rpy="0 0.785398 0"/>
   </joint>
 
-  <gazebo reference="camera_link">
-    <sensor name="d435" type="rgbd_camera">
-      <update_rate>15</update_rate>
-      <always_on>1</always_on>
-      <topic>camera</topic>
-      <gz_frame_id>camera_depth_optical_frame</gz_frame_id>
-      <camera>
-        <horizontal_fov>1.518436</horizontal_fov>
-        <image><width>640</width><height>480</height>
-          <format>R8G8B8</format></image>
-        <clip><near>0.28</near><far>10.0</far></clip>
-        <optical_frame_id>camera_depth_optical_frame</optical_frame_id>
-      </camera>
-    </sensor>
-  </gazebo>
 
   <!-- Стоит в начале base_link: центр колёсной базы на высоте оси.
        Место выбрано не для удобства. Гироскоп от положения не
@@ -1203,12 +965,4 @@
   <joint name="imu_joint" type="fixed">
     <parent link="base_link"/><child link="imu_link"/><origin xyz="0 0 0"/>
   </joint>
-  <gazebo reference="imu_link">
-    <sensor name="imu" type="imu">
-      <update_rate>100</update_rate>
-      <always_on>1</always_on>
-      <topic>imu</topic>
-      <gz_frame_id>imu_link</gz_frame_id>
-    </sensor>
-  </gazebo>
 </robot>

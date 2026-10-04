@@ -15,9 +15,9 @@ IMAGE="nav2:jazzy"
 # Поэтому вторую сессию поднимать так:
 #     ROS_DOMAIN_ID=43 ./run.sh
 # Имя контейнера тогда тоже меняется, и они не конфликтуют.
-ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-42}"
+ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
 NAME="nav2${ROS_DOMAIN_ID:+_$ROS_DOMAIN_ID}"
-[ "$ROS_DOMAIN_ID" = "42" ] && NAME="nav2"
+[ "$ROS_DOMAIN_ID" = "0" ] && NAME="nav2"
 WS="$HOME/Nav_Test"
 PKG="/root/ros_ws/src/maze_nav"
 
@@ -81,6 +81,33 @@ exec docker run -it --rm \
     -v "${XAUTH}:/tmp/.docker.xauth:ro" \
     -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
     --device /dev/dri:/dev/dri \
+    `# Доступ к RealSense. Камера — обычное USB-устройство, но librealsense` \
+    `# переоткрывает его при смене режима, поэтому пробросить один` \
+    `# /dev/bus/usb/NNN/MMM нельзя: после переоткрытия номер другой.` \
+    `# Отсюда весь /dev плюс правила cgroup на классы устройств:` \
+    `# 81 — video4linux (потоки камеры), 189 — USB-устройства.` \
+    -v /dev:/dev \
+    `# /sys НА ЗАПИСЬ — ради ИНС у D435i. Гироскоп с акселерометром` \
+    `# подключены как HID-датчики ядра и управляются через sysfs:` \
+    `# librealsense включает каналы записью в` \
+    `# /sys/bus/iio/devices/iio:deviceN/scan_elements/in_anglvel_*_en.` \
+    `# Docker монтирует /sys только на чтение, и драйвер падает с` \
+    `# "Read-only file system" и "Hid device is busy" — камера при этом` \
+    `# видна и перечисляется, но ни один топик не публикуется.` \
+    `# Права на сами файлы уже нужные: правила udev от librealsense` \
+    `# выставляют им 0666, так что достаточно перемонтировать на запись.` \
+    -v /sys:/sys \
+    --device-cgroup-rule "c 81:* rmw" \
+    --device-cgroup-rule "c 189:* rmw" \
+    `# 166 — последовательные порты USB CDC (/dev/ttyACM*). Через такой` \
+    `# порт приходит поток с Pico с датчиком MPU6050, см. pico_imu.py.` \
+    --device-cgroup-rule "c 166:* rmw" \
+    `# Группа dialout владеет /dev/ttyACM*, без неё порт виден, но не` \
+    `# открывается под непривилегированным пользователем.` \
+    $(getent group dialout >/dev/null && echo --group-add "$(getent group dialout | cut -d: -f3)") \
+    `# Правила udev от librealsense дают доступ группе plugdev. Без неё` \
+    `# под непривилегированным пользователем камера видна, но не читается.` \
+    $(getent group plugdev >/dev/null && echo --group-add "$(getent group plugdev | cut -d: -f3)") \
     `# код и данные пакета` \
     -v "${WS}/src:/root/ros_ws/src" \
     `# Профиль транспорта Fast DDS: поднимает сегмент разделяемой памяти` \

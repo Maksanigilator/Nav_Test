@@ -118,6 +118,15 @@ COLORS = {
 CAM_MOUNT_XYZ = (0.400, 0.0, 0.6147)
 CAM_ARM = 0.10
 CAM_PITCH = math.radians(30)
+
+# Опорные точки профиля крыши, от которых удобно мерить на ЖЕЛЕЗЕ.
+# По обмеру меша: передняя грань профиля CAD Y=410.5, верх CAD Z=718.2.
+# В системе base_link это и есть числа ниже.
+PROFILE_FRONT_X = 0.4105
+PROFILE_TOP_Z = 0.6147
+
+# Собираем описание для железа (ставится ключом --no-sim).
+NO_SIM = False
 # D435: глубина 87x58°, 848x480. Горизонтальный угол задаём, вертикальный
 # Gazebo выводит из соотношения сторон: 2*atan(tan(87/2)*480/848) = 56.5°.
 #
@@ -162,6 +171,37 @@ def inertia_cyl(m, r, h, axis):
             'z': (across, across, along)}[axis]
 
 
+def strip_sim(lines):
+    """Убирает блоки, нужные только симулятору: <gazebo> и <ros2_control>.
+
+    На железе они бесполезны, а подстановка $(find maze_nav) в настройках
+    контроллеров ещё и ломает xacro, если пакет не собран, — описание
+    тогда просто не разворачивается.
+
+    Вырезаются только ЦЕЛЫЕ блоки по открывающему и закрывающему тегу.
+    Сначала я выбрасывал строки по именам кадров, и это оставило в файле
+    осиротевшие <origin> и </joint> — xacro падал на несогласованных
+    тегах. Всё, что нужно убрать выборочно, не печатается изначально.
+    """
+    out, skip_until = [], None
+    for ln in lines:
+        if skip_until:
+            if skip_until in ln:
+                skip_until = None
+            continue
+        hit = False
+        for tag in ('<gazebo', '<ros2_control'):
+            if tag in ln:
+                closing = '</' + tag[1:] + '>'
+                if closing not in ln:
+                    skip_until = closing
+                hit = True
+                break
+        if not hit:
+            out.append(ln)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('data', type=pathlib.Path)
@@ -176,12 +216,39 @@ def main():
                     default='mesh',
                     help='чем ролик меканума сталкивается с полом; cylinder — '
                          'запасной вариант, если 48 мешей тормозят симулятор')
+    # Крепление камеры задаётся ОТ ПРОФИЛЯ КРЫШИ, а не от base_link.
+    #
+    # На железе линейкой от центра робота не померишь: туда не подлезть, и
+    # сама точка условная. А передняя грань профиля и его верхняя плоскость
+    # — это рёбра, к которым прикладывают линейку. Поэтому ключи принимают
+    # ровно то, что человек замерил, а пересчёт делает скрипт.
+    ap.add_argument('--cam-forward', type=float, default=None,
+                    help='вынос камеры вперёд от ПЕРЕДНЕЙ ГРАНИ профиля крыши, м')
+    ap.add_argument('--cam-up', type=float, default=None,
+                    help='подъём камеры над ВЕРХНЕЙ ПЛОСКОСТЬЮ профиля крыши, м')
+    ap.add_argument('--cam-pitch', type=float, default=None,
+                    help='наклон камеры вниз, градусы')
+    ap.add_argument('--no-sim', action='store_true',
+                    help='описание для ЖЕЛЕЗА: без блоков Gazebo, без '
+                         'ros2_control и без оптического кадра камеры')
     ap.add_argument('--controllers',
                     default='$(find maze_nav)/params/agro_controllers.yaml',
                     help='путь к yaml контроллеров. По умолчанию подстановка '
                          'xacro: плагину Gazebo нужен абсолютный путь, а $(find) '
                          'развернётся в него на той машине, где запускают')
     args = ap.parse_args()
+
+    # Пересчёт замеров с железа в систему base_link.
+    global CAM_MOUNT_XYZ, CAM_ARM, CAM_PITCH, NO_SIM
+    NO_SIM = args.no_sim
+    if args.cam_forward is not None:
+        CAM_ARM = args.cam_forward
+        CAM_MOUNT_XYZ = (PROFILE_FRONT_X, CAM_MOUNT_XYZ[1], CAM_MOUNT_XYZ[2])
+    if args.cam_up is not None:
+        CAM_MOUNT_XYZ = (CAM_MOUNT_XYZ[0], CAM_MOUNT_XYZ[1],
+                         PROFILE_TOP_Z + args.cam_up)
+    if args.cam_pitch is not None:
+        CAM_PITCH = math.radians(args.cam_pitch)
 
     d = json.load(open(args.data))
     wheels = {k: v for k, v in d.items() if v}
@@ -413,15 +480,21 @@ def main():
     A('    <parent link="camera_mount_link"/><child link="camera_link"/>')
     A(f'    <origin rpy="0 {CAM_PITCH:.6f} 0"/>')
     A('  </joint>')
-    A('  <!-- Оптический кадр: z вперёд, x вправо, y вниз — как принято в ROS.')
-    A('       Именно его имя должно стоять в gz_frame_id ниже, иначе Gazebo')
-    A('       проштампует снимки составным именем вида model/link/sensor,')
-    A('       которого нет в TF, и SLAM молча развалится. -->')
-    A('  <link name="camera_depth_optical_frame"/>')
-    A('  <joint name="camera_optical_joint" type="fixed">')
-    A('    <parent link="camera_link"/><child link="camera_depth_optical_frame"/>')
-    A(f'    <origin rpy="{-math.pi/2:.6f} 0 {-math.pi/2:.6f}"/>')
-    A('  </joint>')
+    # Оптический кадр печатаем ТОЛЬКО для симулятора. На железе всё
+    # дерево кадров камеры ведёт драйвер реалсенса, и второй источник того
+    # же преобразования заставил бы TF дёргаться между ними. Там мы
+    # останавливаемся на camera_link.
+    if not NO_SIM:
+        A('  <!-- Оптический кадр: z вперёд, x вправо, y вниз — как в ROS.')
+        A('       Именно его имя должно стоять в gz_frame_id ниже, иначе')
+        A('       Gazebo проштампует снимки составным именем вида')
+        A('       model/link/sensor, которого нет в TF, и SLAM развалится. -->')
+        A('  <link name="camera_depth_optical_frame"/>')
+        A('  <joint name="camera_optical_joint" type="fixed">')
+        A('    <parent link="camera_link"/>'
+          '<child link="camera_depth_optical_frame"/>')
+        A(f'    <origin rpy="{-math.pi/2:.6f} 0 {-math.pi/2:.6f}"/>')
+        A('  </joint>')
     A('')
     A('  <gazebo reference="camera_link">')
     A('    <sensor name="d435" type="rgbd_camera">')
@@ -466,6 +539,8 @@ def main():
     A('  </gazebo>')
     A('</robot>')
 
+    if args.no_sim:
+        L = strip_sim(L)
     args.out.write_text('\n'.join(L).replace('CONTROLLERS_YAML', args.controllers) + '\n')
     total = m_base + 4 * (m_hub + n_roll * M_ROLLER)
     print(f'записано {args.out}')

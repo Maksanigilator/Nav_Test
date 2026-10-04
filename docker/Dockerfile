@@ -53,6 +53,7 @@ RUN apt-get update && apt-get install -y \
     ros-jazzy-gz-ros2-control \
     ros-jazzy-mecanum-drive-controller \
     python3-pip \
+    python3-serial \
     && rm -rf /var/lib/apt/lists/*
 #rtabmap-ros = RGB-D SLAM: даёт /map и map->odom вместо связки map_server+AMCL,
 #  плюс rtabmap_odom — визуальная одометрия вместо колёсной.
@@ -64,6 +65,9 @@ RUN apt-get update && apt-get install -y \
 #imu-filter-madgwick + robot-localization — IMU и слияние источников одометрии.
 #image-transport-plugins — сжатие depth/RGB: сырое облако 848x480 это ~390 МБ/с,
 #  по сети такое не ходит, гоняем сжатые картинки и считаем облако у потребителя.
+#python3-serial — приём потока с Pico по USB CDC: на плате MPU6050, и узел
+#  scripts/pico_imu_node.py разбирает её кадры в sensor_msgs/Imu. Ставим из
+#  apt, а не pip: пакет системный, и так он не спорит с externally-managed.
 
 # rosbags — конвертер ROS1 bag -> ROS2 (датасеты TUM RGB-D лежат в формате ROS1).
 # evo — подсчёт ATE траектории против ground truth.
@@ -163,7 +167,7 @@ RUN mkdir -p /root/ros_ws/src /root/ros_ws/build /root/ros_ws/install /root/.gz 
 ENV RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 ENV TURTLEBOT3_MODEL=waffle
 ENV QT_QPA_PLATFORM=xcb
-ENV ROS_DOMAIN_ID=42
+ENV ROS_DOMAIN_ID=0
 #ENV QT_QPA_PLATFORM=xcb настраивает x11
 #GAZEBO_MODEL_DATABASE_URI больше не нужен: у gz своя Fuel, а мир лабиринта
 #её не трогает — земля и солнце описаны прямо в .world
