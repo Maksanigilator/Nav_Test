@@ -300,7 +300,21 @@ def launch_setup(context, *args, **kwargs):
     dropoff = Node(package='maze_nav', executable='dropoff_detector.py',
                    output='screen',
                    condition=IfCondition(LaunchConfiguration('dropoff')),
-                   parameters=[{'use_sim_time': True}],
+                   # ПОДГОНКА ЗЕМЛИ ЗДЕСЬ ВЫКЛЮЧЕНА, и это не экономия.
+                   #
+                   # Она исправляет расхождение между углом крепления
+                   # камеры и тем, что записано в URDF. На живом роботе
+                   # расхождение настоящее: без поправки настил высотой
+                   # 10 см ложился на -1 см вместо -10 и не проходил порог
+                   # обрыва. В симуляторе же URDF И ЕСТЬ истина, поправлять
+                   # нечего, и оценка вносит только собственную ошибку.
+                   #
+                   # Замерено по накопленному слою рельсов (в мире они
+                   # горизонтальны, то есть истина — ноль): с подгонкой
+                   # слой кренился на 2.24 градуса, перепад +8.6 см на
+                   # 2.2 м; без неё 0.88 градуса и +3.3 см. То есть
+                   # подгонка ДОБАВЛЯЛА полтора градуса.
+                   parameters=[{'use_sim_time': True, 'ground_fit': False}],
                    remappings=[('depth', '/camera/depth/image_raw'),
                                ('camera_info', '/camera/color/camera_info'),
                                ('dropoff', '/dropoff/points'),

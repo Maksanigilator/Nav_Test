@@ -68,6 +68,19 @@ Visualization Manager:
       Color: 60; 225; 90
       Decay Time: 0
     - Class: rviz_default_plugins/PointCloud2
+      Name: Рельсы (накопленный слой)
+      Enabled: true
+      Topic:
+        Value: /rails/map
+        Depth: 1
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+      Style: Boxes
+      Size (m): 0.05
+      Color Transformer: RGB8
+      Color: 60; 225; 90
+      Decay Time: 0
+    - Class: rviz_default_plugins/PointCloud2
       Name: Обрыв (край настила)
       Enabled: true
       Topic:

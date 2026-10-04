@@ -1,0 +1,71 @@
+#
+# Стенд передачи кадров в контейнер с YOLO: вход и выход рядом.
+#
+# ОБЕ панели подписаны на ТОПИКИ, а не рисуют что-то из памяти. Левая
+# показывает то, что реально ушло в сеть, правая — то, что реально
+# вернулось. Предпросмотр исходного файла выглядел бы правильно и при
+# полностью сломанной передаче, поэтому так делать нельзя.
+#
+# Reliability Policy у обеих — Best Effort. Такой подписчик совместим с
+# издателем ЛЮБОГО вида, тогда как Reliable молча не соединится с
+# best-effort издателем: топик будет в списке, а панель останется пустой.
+#
+# Панели поначалу встанут вкладками друг на друга — RViz так раскладывает
+# дисплеи по умолчанию. Перетащите одну за заголовок к краю окна, чтобы
+# встали рядом, и сохраните конфиг через File -> Save Config.
+#
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Property Tree Widget:
+      Expanded: ~
+    Width: 260
+Visualization Manager:
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: map
+    Frame Rate: 20
+  Displays:
+    - Class: rviz_default_plugins/Image
+      Name: Отправлено
+      Enabled: true
+      Topic:
+        Value: /camera/color/image_raw
+        Depth: 2
+        Durability Policy: Volatile
+        Reliability Policy: Best Effort
+    - Class: rviz_default_plugins/Image
+      Name: Маска рельсов
+      Enabled: true
+      Topic:
+        Value: /rails/mask
+        Depth: 2
+        Durability Policy: Volatile
+        Reliability Policy: Best Effort
+  Global Status:
+    Enabled: true
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Current View
+      Distance: 4
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+      Pitch: 0.4
+      Yaw: 3.2
+      Target Frame: map
+Window Geometry:
+  Displays:
+    collapsed: false
+  Отправлено:
+    collapsed: false
+  Маска рельсов:
+    collapsed: false
+  Height: 800
+  Width: 1600
+  Hide Left Dock: false
+  Hide Right Dock: true
