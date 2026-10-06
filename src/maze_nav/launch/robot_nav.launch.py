@@ -29,7 +29,7 @@ from launch.actions import (DeclareLaunchArgument, GroupAction,
                             IncludeLaunchDescription)
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import Command, LaunchConfiguration
+from launch.substitutions import PythonExpression, Command, LaunchConfiguration
 from launch_ros.actions import Node, SetRemap
 from launch_ros.parameter_descriptions import ParameterValue
 from typing import List
@@ -64,6 +64,16 @@ def generate_launch_description():
         launch_arguments={
             'camera_name': 'camera',
             'camera_namespace': '',
+            # Живое плотное облако с текстурой. По умолчанию ВЫКЛЮЧЕНО:
+            # 848x480 точек с цветом тридцать раз в секунду — это заметный
+            # поток, а нужен он только чтобы посмотреть глазами, что под
+            # роботом прямо сейчас.
+            #
+            # Карта такой текстуры не даст и не должна: мы кормим RTAB-Map
+            # СВОИМ облаком, где цвет означает смысл (серое — пол, зелёное
+            # — рельсы, красное — кромка), а не вид поверхности. Это
+            # сознательный размен разметки на текстуру.
+            'pointcloud.enable': LaunchConfiguration('cloud'),
             'align_depth.enable': 'true',
             'enable_sync': 'true',
             'depth_module.depth_profile': prof,
@@ -71,8 +81,18 @@ def generate_launch_description():
             # ИНС камеры НЕ трогаем: её забирает ядро модулями hid_sensor_*,
             # и попытка открыть модуль движения роняет весь узел драйвера.
             # Угловую скорость даёт отдельная плата.
-            'enable_gyro': 'false',
-            'enable_accel': 'false',
+            # СОБСТВЕННАЯ ИНС КАМЕРЫ. По умолчанию выключена: для карты
+            # она не нужна, а в ядре её разбирают модули hid_sensor_*, из-за
+            # чего драйвер натыкается на «Permission denied».
+            #
+            # Включается ради калибровки угла крепления: акселерометр
+            # камеры меряет тяжесть В ЕЁ СОБСТВЕННОМ кадре, то есть даёт
+            # наклон камеры напрямую, без посредников и без URDF.
+            #
+            # Если драйвер ругнётся на доступ — выгрузить модули ядра,
+            # которые забрали прибор себе: sudo modprobe -r hid_sensor_accel_3d
+            'enable_gyro': LaunchConfiguration('cam_imu'),
+            'enable_accel': LaunchConfiguration('cam_imu'),
             'initial_reset': 'false',
         }.items())
 
@@ -86,6 +106,32 @@ def generate_launch_description():
                              'gyro_bias': ParameterValue(
                                  LaunchConfiguration('gyro_bias'),
                                  value_type=List[float]),
+                             # ЧУВСТВИТЕЛЬНОСТЬ АКСЕЛЕРОМЕТРА ЗАДАНА ЯВНО.
+                             #
+                             # Узел умеет выбирать её по формату кадра и
+                             # для подлинного MPU6050 выбрал бы верно:
+                             # регистр диапазона у нас читается 0x08, что
+                             # по документации означает +-4 g и 8192
+                             # отсчёта на g.
+                             #
+                             # Но чип на плате НЕ ПОДЛИННЫЙ: WHO_AM_I
+                             # отвечает 0x70 вместо 0x68. У клонов
+                             # раскладка битов диапазона бывает сдвинута,
+                             # и здесь именно так. Замерено на неподвижном
+                             # роботе: тяжесть выходила 4.92 м/с² вместо
+                             # 9.81, то есть ровно вдвое меньше. Значит
+                             # чувствительность 4096, как у +-8 g.
+                             #
+                             # Проверено чтением регистра: запись проходит,
+                             # чип отдаёт обратно ровно то, что записали.
+                             # То есть виновата не прошивка, а раскладка
+                             # конкретного экземпляра.
+                             #
+                             # Проверка после правки: imu_level.py должен
+                             # показать |a| около 9.81. Если выйдет 19.6 —
+                             # поставили не тому чипу, вернуть 0 (выбор по
+                             # формату кадра).
+                             'accel_lsb_per_g': 4096.0,
                              'accel_bias': ParameterValue(
                                  LaunchConfiguration('accel_bias'),
                                  value_type=List[float])}],
@@ -108,7 +154,27 @@ def generate_launch_description():
         package='rtabmap_odom', executable='rgbd_odometry', output='screen',
         remappings=[('rgb/image', rgb), ('rgb/camera_info', info),
                     ('depth/image', depth), ('imu', '/imu/data')])
+    # ТРИ СТЕПЕНИ СВОБОДЫ ВМЕСТО ШЕСТИ, по флагу force_2d.
+    #
+    # Робот ездит по ровному настилу, и физически у него три степени
+    # свободы: x, y и курс. Зрение же оценивает все шесть, и три лишние —
+    # шум, который НАКАПЛИВАЕТСЯ. Замерено в симуляторе: крен 3.5 и тангаж
+    # 5.6 градуса за сорок секунд езды по ровному полу, при истинных нулях.
+    #
+    # На живом роботе это проявилось иначе и больнее. Порог пола у
+    # RTAB-Map — три сантиметра (Grid/MaxGroundHeight ниже). Когда карта
+    # наклоняется, дальние части ровного пола поднимаются выше порога и
+    # становятся ПРЕПЯТСТВИЯМИ: костмап закрашивался непроезжим там, где
+    # робот только что проехал. Заодно переставала выделяться кромка — она
+    # публикуется приподнятой, но на фоне поднявшегося пола терялась.
+    #
+    # Расплата: настоящие наклоны корпуса (подвеска при разгоне, ступенька
+    # на рельсах) в оценку не попадут. Для заезда это не опасно — там крен
+    # проверяется ПО ИНС напрямую, а не по одометрии.
+    force_2d = ParameterValue(LaunchConfiguration('force_2d'), value_type=str)
+
     odom_params = {
+        'Reg/Force3DoF': force_2d,
         'frame_id': 'base_footprint',
         'approx_sync': True,
         'publish_tf': True,
@@ -134,10 +200,48 @@ def generate_launch_description():
     # уже подделана под обычное препятствие — поднята на виртуальную
     # высоту, — и попадает в карту красным. Ровно так это и работало в
     # симуляторе.
+    # Стирать ли базу на старте.
+    #
+    # По умолчанию да: при отладке почти всегда нужна чистая карта, а
+    # дописывание в старую даёт путаницу, которую потом не распутать —
+    # робот стоит в одном месте, а карта помнит прошлую поездку.
+    #
+    # Но когда карту собирают НАРОЧНО, чтобы потом по ней ездить, стирать
+    # её нельзя. Для этого delete_db:=false: тогда база, указанная в db,
+    # переживёт запуск и её можно будет открыть снова.
+    #
+    # ВАЖНО: RTAB-Map дописывает базу по ходу, но закрывает её корректно
+    # только при штатном завершении. Останавливать запуск надо Ctrl-C и
+    # дождаться, пока узлы погаснут сами. Убийство через kill -9 оставит
+    # базу недописанной.
     slam_common = dict(
         package='rtabmap_slam', executable='rtabmap', output='screen',
-        arguments=['--delete_db_on_start'])
+        arguments=[PythonExpression(
+            ["'--delete_db_on_start' if '",
+             LaunchConfiguration('delete_db'), "'.lower() in "
+             "('true', '1', 'yes') else ''"])])
     slam_base = {
+        # Та же мера для графа карты, см. force_2d выше. Slam2D держит
+        # оптимизатор в плоскости: без него граф остаётся трёхмерным, и
+        # замыкания петель снова внесут крен с тангажом, уже исправленные
+        # в одометрии.
+        'Reg/Force3DoF': force_2d,
+        'Optimizer/Slam2D': force_2d,
+        # ОЧЕРЕДИ СИНХРОНИЗАЦИИ подняты с умолчания 10.
+        #
+        # RTAB-Map ждёт пять входов с совпадающими метками: одометрию,
+        # цвет, глубину, калибровку и облако от детектора. Облако приходит
+        # позже остальных — детектор его считает, — а одометрия, как видно
+        # в логе, отдаёт результат с задержкой до 0.4 с. Очередь в 10
+        # кадров на 30 Гц держит всего 333 мс истории, и набор просто не
+        # успевал сойтись: узел работал, но не публиковал НИЧЕГО, включая
+        # преобразование map->odom. Снаружи это выглядело как «нет кадра
+        # map» и неактивный Nav2, хотя причина была здесь.
+        #
+        # Тридцать кадров — это секунда истории, с запасом на наблюдаемые
+        # задержки. Платим памятью на буферы, её достаточно.
+        'topic_queue_size': 30,
+        'sync_queue_size': 30,
         'frame_id': 'base_footprint',
         'subscribe_depth': True,
         'subscribe_rgb': True,
@@ -171,7 +275,29 @@ def generate_launch_description():
                             # пол и препятствия, поэтому сегментация по
                             # нормалям тут лишняя и только мешает.
                             'Grid/NormalsSegmentation': 'false',
-                            'Grid/MaxGroundHeight': '0.03',
+                            # ПОРОГ ПОЛА ПОДНЯТ С 3 ДО 15 СМ.
+                            #
+                            # Всё выше порога RTAB-Map считает
+                            # препятствием. Три сантиметра означали, что
+                            # малейший перекос карты делает дальний край
+                            # ровного пола непроезжим: при остаточном
+                            # наклоне 1.6 градуса пол на трёх метрах
+                            # поднимается на 8 см, и костмап закрашивался
+                            # фиолетовым там, где робот только что ехал.
+                            #
+                            # Нам от сетки нужно немногое: знать, где
+                            # КРОМКА, и не пускать в неизвестность. Кромку
+                            # детектор публикует приподнятой на 30 см
+                            # (virtual_height), так что порог 15 см её
+                            # по-прежнему ловит с двукратным запасом, а
+                            # шум пола и наклон — уже нет.
+                            #
+                            # Расплата: настоящее препятствие ниже 15 см
+                            # на настиле сеткой не заметится. Рельсы в том
+                            # числе — но они и не должны быть
+                            # препятствием, робот на них заезжает, а
+                            # показываются они своим слоем.
+                            'Grid/MaxGroundHeight': '0.15',
                             'Grid/MinGroundHeight': '-0.05',
                             'Grid/RangeMax': '3.0',
                             'Grid/Sensor': '0'})],
@@ -221,6 +347,18 @@ def generate_launch_description():
                                ('grid_cloud', '/dropoff/grid_cloud'),
                                ('rails/mask', '/rails/mask')])
 
+    # Автомат заезда. По умолчанию выключен: он СРАЗУ начинает крутить
+    # робота на месте, а потом едет, и включать его вместе с картой надо
+    # осознанно. Рельсы берёт из накопленного слоя, а не из карты
+    # препятствий: при сегментации в 2 Гц зелёного в карте почти не
+    # остаётся, и вписывание колеи садится мимо — проверено в симуляторе,
+    # колея выходила 261 мм вместо 545.
+    entry = Node(package='maze_nav', executable='rail_entry.py',
+                 output='screen',
+                 condition=IfCondition(LaunchConfiguration('entry')),
+                 remappings=[('odom', '/odom'), ('imu', '/imu/data'),
+                             ('obstacles', '/rails/map')])
+
     rviz = Node(package='rviz2', executable='rviz2', output='screen',
                 condition=IfCondition(LaunchConfiguration('rviz')),
                 arguments=['-d', os.path.join(pkg, 'rviz', 'nav.rviz')])
@@ -240,15 +378,37 @@ def generate_launch_description():
                               description='смещение нуля акселерометра, м/с²'),
         DeclareLaunchArgument('profile', default_value='848x480x30',
                               description='на порту USB2 нужно 640x480x15'),
-        DeclareLaunchArgument('db', default_value='/datasets/robot_map.db'),
+        DeclareLaunchArgument('db', default_value='/datasets/robot_map.db',
+                              description='файл карты; /datasets смонтирован '
+                                          'из datasets/ в корне проекта'),
+        DeclareLaunchArgument('delete_db', default_value='true',
+                              description='стирать карту на старте; false — '
+                                          'продолжать в уже существующей'),
         DeclareLaunchArgument('dropoff', default_value='false',
                               description='искать кромку площадки по '
                                           'глубине; нужен наклон камеры '
                                           '30-35 градусов'),
+        DeclareLaunchArgument('cam_imu', default_value='false',
+                              description='включить собственную ИНС D435i; '
+                                          'нужна для калибровки угла камеры'),
+        DeclareLaunchArgument('cloud', default_value='false',
+                              description='живое плотное облако с камеры '
+                                          'для просмотра в RViz; поток '
+                                          'немалый, включать по нужде'),
+        DeclareLaunchArgument('force_2d', default_value='false',
+                              description='держать одометрию и карту в трёх '
+                                          'степенях свободы: x, y, курс. '
+                                          'Крен, тангаж и высота обнуляются — '
+                                          'для ровного настила это правда, а '
+                                          'не упрощение'),
+        DeclareLaunchArgument('entry', default_value='false',
+                              description='автомат заезда на рельсы; '
+                                          'ОСТОРОЖНО: сразу начинает крутить '
+                                          'робота и ехать'),
         DeclareLaunchArgument('nav2', default_value='false',
                               description='планировщик; скорость уходит '
                                           'в /cmd_nav'),
         DeclareLaunchArgument('rviz', default_value='true'),
-        rsp, camera, pico, madgwick, odom_imu, odom_plain,
+        rsp, camera, pico, madgwick, odom_imu, odom_plain, entry,
         slam_plain, slam_edge, dropoff, nav2, rviz,
     ])
