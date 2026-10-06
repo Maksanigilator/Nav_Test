@@ -25,6 +25,10 @@ install(PROGRAMS
   scripts/imu_axes.py
   scripts/imu_watch.py
   scripts/imu_bias.py
+  scripts/imu_level.py
+  scripts/cam_level.py
+  scripts/cam_pitch.py
+  scripts/wt901_node.py
   scripts/rail_entry_monitor.py
   DESTINATION lib/${PROJECT_NAME}
 )
