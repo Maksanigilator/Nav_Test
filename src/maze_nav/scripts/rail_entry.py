@@ -30,12 +30,14 @@ import rclpy
 import rclpy.signals
 import sensor_msgs_py.point_cloud2 as pc2
 import tf2_ros
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Point, Twist
 from nav2_msgs.action import NavigateToPose
 from nav_msgs.msg import Odometry
 from rclpy.action import ActionClient
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile
 from sensor_msgs.msg import Imu, PointCloud2
+from visualization_msgs.msg import Marker, MarkerArray
 
 
 def yaw_of(q):
@@ -87,6 +89,15 @@ class RailEntry(Node):
         self.create_subscription(Odometry, 'odom', self.on_odom, 20)
         self.create_subscription(Imu, 'imu', self.on_imu, 20)
         self.create_subscription(PointCloud2, 'obstacles', self.on_cloud, 5)
+        # Маркеры для RViz: ось рельсов, их начало и поза старта заезда.
+        # Долговечность transient_local — чтобы RViz, открытый позже,
+        # всё равно получил последнюю картинку, а не ждал нового поиска.
+        self.mk = self.create_publisher(
+            MarkerArray, 'rail_entry/markers',
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+        # Переиздаём раз в секунду: маркеры живут между фазами, а показать
+        # их надо и тому, кто подключился в середине заезда.
+        self.create_timer(1.0, self.publish_markers)
         self.nav = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self.buf = tf2_ros.Buffer()
         tf2_ros.TransformListener(self.buf, self)
@@ -129,6 +140,12 @@ class RailEntry(Node):
             if ((c >> 8) & 255) > 200 and ((c >> 16) & 255) < 100:
                 pts.append((x, y))
         self.cloud = np.array(pts) if pts else None
+        # Кадр берём ИЗ ЗАГОЛОВКА облака, а не предполагаем. Слой рельсов
+        # живёт в odom, а не в map — почему, подробно написано у параметра
+        # rail_map_frame в детекторе. Поза робота для сравнения обязана
+        # браться В ТОМ ЖЕ кадре, иначе сравнивались бы координаты из
+        # разных систем, и ошибка выглядела бы как смещение рельсов.
+        self.cloud_frame = m.header.frame_id or 'map'
 
     def now(self):
         return self.get_clock().now().nanoseconds * 1e-9
@@ -228,6 +245,8 @@ class RailEntry(Node):
             u, t = -u, -t
         start = axis + u * t.min()      # где рельсы начинаются
         self.rails = (axis, u, start)
+        self.gauge = gauge
+        self.publish_markers()
         self.say('ПОИСК', f'нашёл рельсы: колея {gauge * 1000:.0f} мм, '
                           f'направление {math.degrees(math.atan2(u[1], u[0])):+.1f}°, '
                           f'начало x={start[0]:+.2f} y={start[1]:+.2f}, '
@@ -246,7 +265,14 @@ class RailEntry(Node):
             self.say('ПОДХОД', 'Nav2 не отвечает')
             return False
         g = NavigateToPose.Goal()
-        g.pose.header.frame_id = 'map'
+        # Цель отдаём В ТОМ ЖЕ кадре, в котором пришло облако рельсов.
+        # Раньше здесь стояло 'map' жёстко, и это было верно, пока слой
+        # жил в карте. После перевода слоя в odom координаты цели стали
+        # одометрическими, а подпись осталась карточной — Nav2 увёз бы
+        # робота на величину расхождения map и odom. Он умеет принимать
+        # цель в любом кадре, который может преобразовать, так что просто
+        # называем кадр честно.
+        g.pose.header.frame_id = self.frame()
         g.pose.pose.position.x = float(goal_xy[0])
         g.pose.pose.position.y = float(goal_xy[1])
         g.pose.pose.orientation.z = math.sin(yaw / 2)
@@ -268,12 +294,84 @@ class RailEntry(Node):
     # ── ВЫВЕРКА ───────────────────────────────────────────────────────
     def pose_xy(self):
         try:
-            tr = self.buf.lookup_transform('map', 'base_footprint',
+            tr = self.buf.lookup_transform(self.frame(), 'base_footprint',
                                            rclpy.time.Time())
         except Exception:
             return None
         return np.array([tr.transform.translation.x,
                          tr.transform.translation.y])
+
+    def arrow(self, mid, p0, p1, rgb, z=0.10, width=0.04):
+        """Стрелка от p0 к p1. Задаём двумя точками, а не позой с кватернионом:
+        направление здесь и есть смысл маркера, и так его не переврать."""
+        m = Marker()
+        m.header.frame_id = self.frame()
+        m.header.stamp = self.get_clock().now().to_msg()
+        m.ns, m.id = 'rail_entry', mid
+        m.type, m.action = Marker.ARROW, Marker.ADD
+        m.pose.orientation.w = 1.0
+        for p, pt in ((p0, Point()), (p1, Point())):
+            pt.x, pt.y, pt.z = float(p[0]), float(p[1]), z
+            m.points.append(pt)
+        # x — толщина древка, y — диаметр наконечника, z — его длина.
+        m.scale.x, m.scale.y, m.scale.z = width, width * 2.2, width * 3.0
+        m.color.r, m.color.g, m.color.b, m.color.a = (*rgb, 0.9)
+        return m
+
+    def publish_markers(self):
+        """Что именно автомат считает рельсами и куда собирается встать.
+
+        Нужно не для красоты: колея и направление — это ОЦЕНКА по облаку,
+        и она может сесть мимо. Глазами промах виден мгновенно, а по
+        числам в логе — нет: «колея 261 мм» ни о чём не говорит, пока не
+        увидишь, что линия легла поперёк труб.
+        """
+        if getattr(self, 'rails', None) is None:
+            return
+        axis, u, start = self.rails
+        back = float(self.get_parameter('approach_back').value)
+        length = float(self.get_parameter('drive_distance').value)
+        goal = start - u * back
+
+        a = MarkerArray()
+        # Ось рельсов от их начала вперёд на всю длину заезда, зелёная.
+        a.markers.append(self.arrow(0, start, start + u * length,
+                                    (0.24, 0.88, 0.35)))
+        # Подход: от точки старта к началу рельсов, голубая. Длина стрелки
+        # и есть approach_back, так что видно, где робот встанет.
+        a.markers.append(self.arrow(1, goal, start, (0.25, 0.75, 1.0),
+                                    z=0.06, width=0.03))
+        # Начало рельсов — жёлтый шар.
+        m = Marker()
+        m.header.frame_id = self.frame()
+        m.header.stamp = self.get_clock().now().to_msg()
+        m.ns, m.id = 'rail_entry', 2
+        m.type, m.action = Marker.SPHERE, Marker.ADD
+        m.pose.position.x, m.pose.position.y = float(start[0]), float(start[1])
+        m.pose.position.z, m.pose.orientation.w = 0.10, 1.0
+        m.scale.x = m.scale.y = m.scale.z = 0.12
+        m.color.r, m.color.g, m.color.b, m.color.a = 1.0, 0.85, 0.1, 0.9
+        a.markers.append(m)
+        # Подпись с измеренной колеёй: промах вписывания виден по ней
+        # сразу, если помнить, что настоящая колея 526 мм
+        # (обмер: просвет 470 мм плюс труба 56 мм).
+        t = Marker()
+        t.header = m.header
+        t.ns, t.id = 'rail_entry', 3
+        t.type, t.action = Marker.TEXT_VIEW_FACING, Marker.ADD
+        t.pose.position.x, t.pose.position.y = float(goal[0]), float(goal[1])
+        t.pose.position.z, t.pose.orientation.w = 0.45, 1.0
+        t.scale.z = 0.14
+        t.color.r = t.color.g = t.color.b = t.color.a = 1.0
+        t.text = (f'колея {getattr(self, "gauge", 0.0) * 1000:.0f} мм, '
+                  f'курс {math.degrees(math.atan2(u[1], u[0])):+.0f}°')
+        a.markers.append(t)
+        self.mk.publish(a)
+
+    def frame(self):
+        """Кадр, в котором пришло облако рельсов. Он же используется для
+        позы робота и для маркеров — все три обязаны совпадать."""
+        return getattr(self, 'cloud_frame', 'map')
 
     def rail_error(self):
         """Поперечное смещение и курсовая ошибка относительно оси рельсов.
@@ -282,7 +380,7 @@ class RailEntry(Node):
         зависит от того, насколько робот уже повернулся.
         """
         try:
-            tr = self.buf.lookup_transform('map', 'base_footprint',
+            tr = self.buf.lookup_transform(self.frame(), 'base_footprint',
                                            rclpy.time.Time())
         except Exception:
             return None

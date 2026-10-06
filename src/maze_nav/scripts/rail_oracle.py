@@ -106,6 +106,17 @@ class RailOracle(Node):
         # запаса маска накрывает 89.9% пикселей на высоте трубы, и
         # оставшийся силуэт уходит в «не рельс».
         self.declare_parameter('radius_scale', 1.8)
+        # Верхняя частота публикации маски, Гц. 0 = на каждом кадре.
+        #
+        # Оракул идеален во всём, и это мешает: настоящая сегментация
+        # работает заметно реже кадров, и сопоставление маски с глубиной
+        # приходится делать по времени. Чтобы эта часть конвейера
+        # проверялась, а не обходилась стороной, частоту оракула надо
+        # уметь занижать до настоящей. Два герца — столько же, сколько
+        # берёт RTAB-Map (Rtabmap/DetectionRate), то есть ровно та
+        # частота, на которой модель и будет работать.
+        self.declare_parameter('max_rate', 0.0)
+        self._last_ns = 0
 
         self.rails, self.pipe_r = rails_from_world(
             self.get_parameter('world_file').value)
@@ -187,6 +198,12 @@ class RailOracle(Node):
     def on_depth(self, m):
         if self.k is None:
             return
+        rate = float(self.get_parameter('max_rate').value)
+        if rate > 0:
+            now = self.get_clock().now().nanoseconds
+            if now - self._last_ns < 1e9 / rate:
+                return
+            self._last_ns = now
         cam = self.get_parameter('camera_frame').value
         T_ob, base = self.pose_at(m.header.stamp)
         if T_ob is None:

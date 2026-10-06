@@ -49,9 +49,9 @@ Visualization Manager:
         Depth: 1
         Durability Policy: Transient Local
         Reliability Policy: Reliable
-      Style: Flat Squares
-      Size (m): 0.03
-      Color Transformer: FlatColor
+      Style: Points
+      Size (Pixels): 2
+      Color Transformer: RGB8
       Color: 165; 165; 170
       Decay Time: 0
     - Class: rviz_default_plugins/PointCloud2
@@ -67,6 +67,14 @@ Visualization Manager:
       Color Transformer: RGB8
       Color: 60; 225; 90
       Decay Time: 0
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Заезд (ось рельсов и точка старта)
+      Enabled: true
+      Topic:
+        Value: /rail_entry/markers
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
     - Class: rviz_default_plugins/PointCloud2
       Name: Рельсы (накопленный слой)
       Enabled: true
@@ -76,9 +84,43 @@ Visualization Manager:
         Durability Policy: Volatile
         Reliability Policy: Reliable
       Style: Boxes
-      Size (m): 0.05
+      Size (m): 0.025
       Color Transformer: RGB8
       Color: 60; 225; 90
+      Decay Time: 0
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Модель рельсов (проверка)
+      Enabled: true
+      Topic:
+        Value: /rails/model
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+    - Class: rtabmap_rviz_plugins/MapCloud
+      Name: Текстурная карта RTAB-Map
+      Enabled: false
+      Topic:
+        Value: /mapData
+        Depth: 1
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+      Cloud decimation: 4
+      Cloud max depth: 4.0
+      Cloud voxel size: 0.01
+      Style: Points
+      Size (Pixels): 2
+      Color Transformer: RGB8
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Облако камеры (живое)
+      Enabled: false
+      Topic:
+        Value: /camera/depth/color/points
+        Depth: 2
+        Durability Policy: Volatile
+        Reliability Policy: Best Effort
+      Style: Points
+      Size (Pixels): 2
+      Color Transformer: RGB8
       Decay Time: 0
     - Class: rviz_default_plugins/PointCloud2
       Name: Обрыв (край настила)

@@ -314,7 +314,15 @@ def launch_setup(context, *args, **kwargs):
                    # слой кренился на 2.24 градуса, перепад +8.6 см на
                    # 2.2 м; без неё 0.88 градуса и +3.3 см. То есть
                    # подгонка ДОБАВЛЯЛА полтора градуса.
-                   parameters=[{'use_sim_time': True, 'ground_fit': False}],
+                   #
+                   # РАЗМЕРЫ РЕЛЬСОВ ЗДЕСЬ СВОИ. По умолчанию в детекторе
+                   # записан обмер настоящих рельсов (колея 526 мм, труба
+                   # 56), а нарисованная сцена построена по другим числам
+                   # — 545 и 51, см. gen_rails_world.py. Не задать их явно
+                   # значило бы мерить нарисованные рельсы чужой линейкой.
+                   parameters=[{'use_sim_time': True, 'ground_fit': False,
+                                'rail_gauge': 0.545, 'rail_pipe_d': 0.051,
+                                'rail_bend_r': 0.145}],
                    remappings=[('depth', '/camera/depth/image_raw'),
                                ('camera_info', '/camera/color/camera_info'),
                                ('dropoff', '/dropoff/points'),
@@ -330,7 +338,10 @@ def launch_setup(context, *args, **kwargs):
                        output='screen',
                        condition=IfCondition(LaunchConfiguration('rail_oracle')),
                        parameters=[{'use_sim_time': True,
-                                    'world_file': world}],
+                                    'world_file': world,
+                                    'max_rate': ParameterValue(
+                                        LaunchConfiguration('oracle_rate'),
+                                        value_type=float)}],
                        remappings=[('depth', '/camera/depth/image_raw'),
                                    ('camera_info',
                                     '/camera/color/camera_info'),
@@ -405,9 +416,25 @@ def launch_setup(context, *args, **kwargs):
                   'Odom/ResetCountdown': '1',
               }, {
                   # Ждём IMU перед стартом: он даёт начальную ориентацию по
-                  # гравитации, иначе крен и тангаж копятся от нуля и никак
-                  # не поправляются.
+                  # гравитации, иначе крен и тангаж копятся от нуля.
                   'wait_imu_to_init': True,
+                  # ОДОМЕТРИЮ ТОЖЕ ДЕРЖИМ В ТРЁХ СТЕПЕНЯХ СВОБОДЫ.
+                  #
+                  # Раньше Reg/Force3DoF стоял только у узла SLAM, и
+                  # считалось, что крен с тангажом удержит ИМУ. Это
+                  # заблуждение: wait_imu_to_init задаёт лишь НАЧАЛЬНУЮ
+                  # ориентацию, а дальше визуальная одометрия свободна и
+                  # уходит. Замерено на ровном полу симулятора после
+                  # нескольких метров езды: крен +3.5, тангаж +5.6 градуса
+                  # при истинных нулях. В RViz это видно сразу — модель
+                  # робота стоит наклонённой, хотя в Gazebo она ровная.
+                  #
+                  # Беда не косметическая: через TF этот наклон уходит во
+                  # ВСЁ, что размещается по позе робота, — в облако для
+                  # карты, в опорную плоскость детектора и в накопленный
+                  # слой рельсов. Робот ездит по ровному настилу, и три
+                  # степени свободы для него — не упрощение, а правда.
+                  'Reg/Force3DoF': 'true',
               }],
               remappings=rtabmap_topics)
     slam_node = Node(package='rtabmap_slam', executable='rtabmap',
@@ -531,6 +558,13 @@ def generate_launch_description():
         DeclareLaunchArgument('nav2', default_value='false',
                               description='планировщик Nav2 для подхода '
                                           'к точке заезда'),
+        DeclareLaunchArgument('oracle_rate', default_value='0.0',
+                              description='частота идеальной маски, Гц; '
+                                          '0 = на каждом кадре. Занижать до '
+                                          '2.0, чтобы проверять сопоставление '
+                                          'маски с глубиной по времени — '
+                                          'настоящая модель работает именно '
+                                          'на такой частоте'),
         DeclareLaunchArgument('rail_oracle', default_value='true',
                               description='идеальная маска рельсов из мира '
                                           'вместо распознавания'),
