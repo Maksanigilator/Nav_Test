@@ -935,17 +935,17 @@
   </link>
   <joint name="camera_mount_joint" type="fixed">
     <parent link="base_link"/><child link="camera_mount_link"/>
-    <origin xyz="0.4905 0.0 0.6747000000000001"/>
+    <origin xyz="0.4905 0.0 0.6217"/>
   </joint>
 
-  <!-- D435, наклон 45° вниз -->
+  <!-- D435, наклон 50° вниз -->
   <link name="camera_link">
     <visual><geometry><box size="0.025 0.090 0.025"/></geometry>
       <material name="hub"/></visual>
   </link>
   <joint name="camera_joint" type="fixed">
     <parent link="camera_mount_link"/><child link="camera_link"/>
-    <origin rpy="0 0.785398 0"/>
+    <origin rpy="0 0.874410 0"/>
   </joint>
 
 
