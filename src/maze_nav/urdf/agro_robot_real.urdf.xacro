@@ -929,23 +929,23 @@
        Наклон живёт отдельно, в camera_link, чтобы менять его одной
        константой, не трогая вынос. -->
   <link name="camera_mount_link">
-    <visual><origin xyz="-0.0400 0 0" rpy="0 1.570796 0"/>
-      <geometry><cylinder radius="0.012" length="0.08"/></geometry>
+    <visual><origin xyz="-0.0150 0 0" rpy="0 1.570796 0"/>
+      <geometry><cylinder radius="0.012" length="0.03"/></geometry>
       <material name="hub"/></visual>
   </link>
   <joint name="camera_mount_joint" type="fixed">
     <parent link="base_link"/><child link="camera_mount_link"/>
-    <origin xyz="0.4905 0.0 0.6217"/>
+    <origin xyz="0.4405 0.0 0.5567"/>
   </joint>
 
-  <!-- D435, наклон 50° вниз -->
+  <!-- D435, наклон 49° вниз -->
   <link name="camera_link">
     <visual><geometry><box size="0.025 0.090 0.025"/></geometry>
       <material name="hub"/></visual>
   </link>
   <joint name="camera_joint" type="fixed">
     <parent link="camera_mount_link"/><child link="camera_link"/>
-    <origin rpy="0 0.874410 0"/>
+    <origin rpy="0 0.855211 0"/>
   </joint>
 
 
