@@ -29,10 +29,22 @@ XAUTH="${XAUTHORITY:-$HOME/.Xauthority}"
 # с тем же именем. Якоря ^$ обязательны, иначе фильтр поймает и nav2_test.
 if [ -n "$(docker ps -q -f name="^${NAME}$")" ]; then
     echo "Контейнер ${NAME} уже запущен — подключаюсь."
-    exec docker exec -it "${NAME}" "${@:-zsh}"
+    # ЧЕРЕЗ ИНТЕРАКТИВНЫЙ zsh, А НЕ НАПРЯМУЮ. docker exec не проходит через
+    # точку входа, и ROS в PATH не попадает: `./run.sh rviz2` отвечал
+    # «executable file not found», хотя rviz2 в образе есть. Оболочка с
+    # -i читает ~/.zshrc, а он подключает и /opt/ros, и оба наших
+    # пространства.
+    #
+    # Идиома `zsh -ic 'exec "$@"' zsh "$@"` передаёт слова как есть, не
+    # склеивая их в строку: иначе развалились бы аргументы с пробелами и
+    # кавычками, вроде gyro_bias:='[0.13, 0.004, 0.05]'.
+    if [ $# -eq 0 ]; then
+        exec docker exec -it "${NAME}" zsh
+    fi
+    exec docker exec -it "${NAME}" zsh -ic 'exec "$@"' zsh "$@"
 fi
 
-mkdir -p "${WS}/src" "${WS}/datasets"
+mkdir -p "${WS}/src" "${WS}/datasets" "${WS}/datasets/zed_settings" "${WS}/datasets/zed_resources"
 
 exec docker run -it --rm \
     --name "${NAME}" \
@@ -131,6 +143,22 @@ exec docker run -it --rm \
     -e FASTRTPS_DEFAULT_PROFILES_FILE=/root/fastdds_profiles.xml \
     `# датасеты (TUM RGB-D и пр.) — гигабайты, в git не лежат, см. .gitignore` \
     -v "${WS}/datasets:/datasets" \
+    `# Заводские калибровки камер ZED. Лежат СНАРУЖИ образа намеренно:` \
+    `# SDK скачивает их по серийному номеру при первом подключении, и в` \
+    `# образе они пропадали бы при каждой пересборке — камера каждый раз` \
+    `# ходила бы в сеть, а без сети не открывалась бы вовсе.` \
+    -v "${WS}/datasets/zed_settings:/usr/local/zed/settings" \
+    `# Модели глубины и СКОМПИЛИРОВАННЫЕ под видеокарту движки. Тоже` \
+    `# наружу, и по той же причине, только цена ошибки выше: при первом` \
+    `# запуске SDK прогоняет нейросеть через TensorRT под конкретную` \
+    `# карту, и это ШЕСТЬ МИНУТ. Каталог в образе принадлежит root:zed с` \
+    `# правами 775, наш пользователь туда не пишет — движок не` \
+    `# сохранялся бы вовсе, и шесть минут повторялись бы при каждом` \
+    `# запуске, благо контейнер с --rm.` \
+    `#` \
+    `# Сами модели сюда скопированы из образа: монтирование перекрыло бы` \
+    `# их, и SDK остался бы вообще без сети для расчёта глубины.` \
+    -v "${WS}/datasets/zed_resources:/usr/local/zed/resources" \
     `# артефакты сборки и кэш Gazebo — в томах, на хост не выносятся` \
     -v nav2_build:/root/ros_ws/build \
     -v nav2_install:/root/ros_ws/install \

@@ -23,11 +23,12 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import (DeclareLaunchArgument, GroupAction,
+                            IncludeLaunchDescription)
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
-from launch_ros.actions import Node
+from launch_ros.actions import Node, SetRemap
 
 
 def generate_launch_description():
@@ -46,6 +47,14 @@ def generate_launch_description():
     rgb = '/camera/color/image_raw'
     info = '/camera/color/camera_info'
     depth = '/camera/aligned_depth_to_color/image_raw'
+
+    # ДВЕ КАМЕРЫ НА ВЫБОР, аргумент camera:=realsense|zed. Остальной
+    # запуск знает только три имени топиков выше и про камеру не
+    # осведомлён: ветка ZED переименовывает свои в эти же.
+    use_rs = PythonExpression(
+        ["'", LaunchConfiguration('camera'), "' != 'zed'"])
+    use_zed = PythonExpression(
+        ["'", LaunchConfiguration('camera'), "' == 'zed'"])
 
     realsense = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
@@ -79,7 +88,123 @@ def generate_launch_description():
             # драйвер сыплет «No such device» на каждом кадре, и лечится
             # это только физическим переподключением. Включать осознанно.
             'initial_reset': LaunchConfiguration('reset'),
-        }.items())
+        }.items(),
+        condition=IfCondition(use_rs))
+
+    # ═══ Ветка ZED ═══
+    #
+    # Имена топиков сняты с живого узла обёртки 5.5 — в прежних выпусках
+    # они были другими. Если после обновления камера перестанет доходить
+    # до RTAB-Map, сверить с разделом «PUBLISHED TOPICS» в её логе.
+    #
+    # Собственную привязку ZED выключаем: одометрию здесь считает
+    # rgbd_odometry, а два источника одного преобразования рвут дерево TF.
+    zed = GroupAction(
+        condition=IfCondition(use_zed),
+        actions=[
+            SetRemap('/zed/zed_node/rgb/color/rect/image', rgb),
+            SetRemap('/zed/zed_node/rgb/color/rect/camera_info', info),
+            SetRemap('/zed/zed_node/depth/depth_registered', depth),
+            # ИНС ZED отдаёт УЖЕ ГОТОВУЮ ориентацию: кватернион считает
+            # сам SDK, сводя гироскоп с акселерометром на 800 Гц. Поэтому
+            # её поток идёт прямо в /imu/data, минуя фильтр Маджвика —
+            # тот ниже отключается, когда выбрана эта камера.
+            #
+            # Нужна она для выравнивания карты по тяжести. Без неё
+            # горизонтом становится то, как камера была наклонена в
+            # первое мгновение, и вся карта наследует этот перекос.
+            SetRemap('/zed/zed_node/imu/data', '/imu/data'),
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(os.path.join(
+                    get_package_share_directory('zed_wrapper'), 'launch',
+                    'zed_camera.launch.py')),
+                launch_arguments={
+                    'camera_model': 'zedm',
+                    'camera_name': 'zed',
+                    # РАЗРЕШЕНИЕ И ТЕМП СНИЖЕНЫ НАМЕРЕННО.
+                    #
+                    # По умолчанию ZED отдаёт 1920x1080 на тридцати
+                    # герцах. Замерено, что с этим связка не справляется:
+                    # обработка кадра в RTAB-Map занимала до 1.2 с при
+                    # темпе 0.5 с, задержки доходили до 1.6 с, одометрия
+                    # шла 11 Гц при кадрах 27 — то есть между двумя
+                    # обработанными кадрами камера успевала уехать, и
+                    # сопоставление валилось с «Not enough inliers 0/15».
+                    # Каждый такой провал сбрасывает одометрию, а сброс
+                    # начинает НОВУЮ карту: в рабочей памяти набралось 799
+                    # узлов, не связанных между собой, и единой карты не
+                    # получалось вовсе.
+                    #
+                    # HD720 это 1280x720 против 848x480 у RealSense —
+                    # всё ещё вдвое больше, но уже посильно. Если и этого
+                    # много, следующая ступень VGA (672x376).
+                    'param_overrides': PythonExpression([
+                        "';'.join([x for x in [",
+                        "'general.grab_resolution:=",
+                        LaunchConfiguration('zed_res'), "',",
+                        "'general.pub_frame_rate:=",
+                        LaunchConfiguration('zed_fps'), "',",
+                        "'depth.depth_mode:=",
+                        LaunchConfiguration('zed_depth_mode'), "',",
+                        "'depth.max_depth:=",
+                        LaunchConfiguration('zed_max_depth'), "',",
+                        "'depth.depth_confidence:=",
+                        LaunchConfiguration('zed_conf'), "',",
+                        # СОБСТВЕННАЯ ПРИВЯЗКА ZED ВЫКЛЮЧЕНА ЦЕЛИКОМ.
+                        # Раньше я выключил только публикацию её
+                        # преобразований, а сам расчёт продолжал идти: в
+                        # логе видно «Positional tracking: TRUE, mode
+                        # GEN 3, Area Memory: TRUE» — это отдельный SLAM
+                        # со своей картой местности внутри SDK. Нам он не
+                        # нужен, одометрию ведёт rgbd_odometry, карту
+                        # RTAB-Map. Замерено: узел камеры съедал 119%
+                        # процессора, и заметная часть уходила сюда.
+                        "'pos_tracking.pos_tracking_enabled:=false',",
+                        "'", LaunchConfiguration('zed_extra'), "'",
+                        "] if x])"]),
+                    'publish_tf': 'false',
+                    'publish_map_tf': 'false',
+                    # А ВОТ СВЯЗКУ ИНС С КОРПУСОМ ПУБЛИКОВАТЬ НАДО.
+                    # Это отдельный ключ, и по умолчанию он false. Без
+                    # него кадра zed_imu_link в дереве нет, хотя
+                    # сообщения ИНС на него ссылаются, и одометрия
+                    # отказывается её принимать:
+                    #   «Dropping imu data! A valid TF between
+                    #    camera_link and zed_imu_link is required»
+                    # Сам узел при этом молча пишет в лог
+                    # «Broadcast IMU TF: FALSE» — заметить легко только
+                    # задним числом.
+                    'publish_imu_tf': 'true',
+                    # publish_urdf ОСТАЁТСЯ ВКЛЮЧЁННЫМ, и это не
+                    # недосмотр. Сперва я его выключил, рассудив, что
+                    # описание камеры нам ни к чему: своё есть. Узел
+                    # после этого вставал на «Starting Positional
+                    # Tracking / Waiting for valid static
+                    # transformations» и кадры не публиковал вовсе —
+                    # привязка ждёт преобразований, которые публикует
+                    # именно этот издатель.
+                    #
+                    # Выключены только publish_tf и publish_map_tf:
+                    # odom->base и map->odom дают rgbd_odometry и
+                    # RTAB-Map, а два источника одного преобразования
+                    # рвут дерево TF.
+                    'publish_urdf': 'true',
+                }.items()),
+            # Опорный кадр здесь camera_link, а глубина приходит в
+            # zed_left_camera_frame_optical. Цепочка кадров ZED висит
+            # отдельным деревом, и без этой связки RTAB-Map не сможет
+            # пересчитать глубину и откажется работать.
+            #
+            # Нули означают: камера там же, где корпус RealSense. Для
+            # съёмки с рук это и не важно — карта строится относительно
+            # самой камеры.
+            Node(package='tf2_ros', executable='static_transform_publisher',
+                 name='zed_mount', output='log',
+                 arguments=['--frame-id', 'camera_link',
+                            '--child-frame-id', 'zed_camera_link',
+                            '--x', '0', '--y', '0', '--z', '0',
+                            '--roll', '0', '--pitch', '0', '--yaw', '0']),
+        ])
 
     # ИСТОЧНИК ИНС: камера или отдельная плата.
     #
@@ -111,7 +236,13 @@ def generate_launch_description():
     imu_filter = Node(
         package='imu_filter_madgwick', executable='imu_filter_madgwick_node',
         name='imu_filter', output='screen',
-        condition=IfCondition(imu),
+        # ТОЛЬКО ДЛЯ СЫРЫХ ИСТОЧНИКОВ. У RealSense и у платы на Pico
+        # наружу идут отдельно гироскоп и акселерометр, их надо свести в
+        # ориентацию. ZED делает это внутри себя, и второй фильтр поверх
+        # готового кватерниона только навредил бы.
+        condition=IfCondition(PythonExpression([
+            "'", imu, "'.lower() in ('true','1') and '",
+            LaunchConfiguration('camera'), "' != 'zed'"])),
         parameters=[{'use_mag': False, 'world_frame': 'enu',
                      # TF от фильтра не нужен: дерево кадров ведёт драйвер
                      # камеры, и вторая рука в нём всё только испортит.
@@ -138,6 +269,18 @@ def generate_launch_description():
         # узел сам перезапускается, а не встаёт до конца прогона.
         'Odom/Strategy': '0',
         'Vis/MinInliers': '15',
+        # НЕ ПРОВЕРЯТЬ СВЯЗЬ С ИНС НА КАЖДОЕ СООБЩЕНИЕ.
+        #
+        # Связь камеры с её ИНС неподвижна — это железо внутри корпуса.
+        # Но узел по умолчанию запрашивает её под метку времени каждого
+        # сообщения, а ИНС идёт 800 Гц и обгоняет публикацию
+        # преобразований на миллисекунды. Получался сплошной поток
+        # «Lookup would require extrapolation into the future» и
+        # «Could not transform IMU msg», по два предупреждения на кадр.
+        #
+        # Сам узел в этом же предупреждении и советует: если связь
+        # статична, проверку можно выключить. Она статична.
+        'always_check_imu_tf': False,
     }
     odom_imu = Node(**odom_common, condition=IfCondition(imu),
                     parameters=[dict(odom_params, wait_imu_to_init=True)])
@@ -190,6 +333,18 @@ def generate_launch_description():
                remappings=[('rgb/image', rgb), ('rgb/camera_info', info),
                            ('depth/image', depth)])
 
+    # RViz с нашим конфигом — РЯДОМ с rtabmap_viz, а не вместо него.
+    # Окно rtabmap_viz показывает внутреннюю кухню SLAM: замыкания
+    # петель, одометрию, граф. А плотное текстурное облако всей карты
+    # даёт слой «Текстурная карта RTAB-Map» в RViz, и он подписан на
+    # /mapData. В конфиге он ВЫКЛЮЧЕН по умолчанию: поток тяжёлый, и
+    # нужен он не всегда — включается галкой в списке слоёв.
+    rviz = Node(package='rviz2', executable='rviz2', output='log',
+                condition=IfCondition(LaunchConfiguration('rviz')),
+                arguments=['-d', os.path.join(
+                    get_package_share_directory('maze_nav'),
+                    'rviz', 'nav.rviz')])
+
     return LaunchDescription([
         DeclareLaunchArgument('imu', default_value='true',
                               description='есть ли ИНС в камере: у D435i '
@@ -219,5 +374,54 @@ def generate_launch_description():
                                           'включать только осознанно'),
         DeclareLaunchArgument('viz', default_value='true',
                               description='окно rtabmap_viz'),
-        realsense, imu_filter, pico, pico_tf, odom_imu, odom_plain, slam_fresh, slam_keep, viz,
+        # ГЛУБИНА ОБРЕЗАНА ЧЕТЫРЬМЯ МЕТРАМИ, и это главная настройка.
+        # У ZED Mini стереобаза 62.9 мм (из её калибровки), а ошибка
+        # глубины растёт как квадрат дальности и обратно базе:
+        #
+        #    1 м -> 0.9 см    4 м -> 14 см
+        #    2 м -> 3.5 см    5 м -> 22 см
+        #    3 м -> 8   см   10 м -> 89 см
+        #
+        # По умолчанию SDK принимает всё до десяти метров, и точки с
+        # ошибкой под метр ложились в карту наравне с ближними, размазывая
+        # её. Четыре метра — граница, за которой ошибка превышает 14 см.
+        # ВОЗВРАЩЕНО К ДЕСЯТИ МЕТРАМ. Обрезка до четырёх улучшала бы
+        # карту, но ломала одометрию: ей нужны точки С ГЛУБИНОЙ как
+        # опорные признаки, и в просторном помещении четыре метра
+        # оставляли её почти без материала — траектория запуталась.
+        #
+        # Правильное место для обрезки не здесь, а на стороне карты:
+        # камера пусть отдаёт всё, что видит, одометрия пользуется
+        # дальними точками, а в КАРТУ дальний шум не пускаем отдельно.
+        # В nav.rviz у слоя текстурной карты для этого уже стоит
+        # «Cloud max depth: 4.0», а у RTAB-Map есть Grid/RangeMax.
+        DeclareLaunchArgument('zed_max_depth', default_value='10.0',
+                              description='дальше этого глубина ZED не '
+                                          'используется, м'),
+        # Порог доверия: чем МЕНЬШЕ, тем строже отбор. По умолчанию 95,
+        # то есть пропускается почти всё, включая края предметов, блики и
+        # однотонные пятна, где стерео угадывает. 50 оставляет только
+        # уверенные пиксели: карта реже, но чище.
+        DeclareLaunchArgument('zed_conf', default_value='50',
+                              description='порог доверия к глубине ZED, '
+                                          '0..100, меньше — строже'),
+        DeclareLaunchArgument('zed_depth_mode', default_value='NEURAL_LIGHT',
+                              description='NEURAL_LIGHT, NEURAL, NEURAL_PLUS: '
+                                          'точнее и тяжелее по возрастанию'),
+        DeclareLaunchArgument('zed_extra', default_value='',
+                              description='любые ещё параметры ZED через '
+                                          'точку с запятой, вида '
+                                          'раздел.имя:=значение'),
+        DeclareLaunchArgument('zed_res', default_value='HD720',
+                              description='разрешение ZED: HD2K, HD1080, '
+                                          'HD720, VGA'),
+        DeclareLaunchArgument('zed_fps', default_value='15.0',
+                              description='темп публикации кадров ZED, Гц'),
+        DeclareLaunchArgument('camera', default_value='realsense',
+                              description='какая камера: realsense или zed'),
+        DeclareLaunchArgument('rviz', default_value='false',
+                              description='окно RViz с нашим конфигом: в нём '
+                                          'живёт слой плотного текстурного '
+                                          'облака всей карты'),
+        realsense, zed, imu_filter, pico, pico_tf, odom_imu, odom_plain, slam_fresh, slam_keep, viz, rviz,
     ])
