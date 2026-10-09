@@ -30,7 +30,7 @@ import rclpy
 import rclpy.signals
 import sensor_msgs_py.point_cloud2 as pc2
 import tf2_ros
-from geometry_msgs.msg import Point, Twist
+from geometry_msgs.msg import Point, PoseStamped, Twist
 from nav2_msgs.action import NavigateToPose
 from nav_msgs.msg import Odometry
 from rclpy.action import ActionClient
@@ -53,7 +53,17 @@ class RailEntry(Node):
     def __init__(self):
         super().__init__('rail_entry')
         p = self.declare_parameter
+        # Прокрут на месте перед поиском. Нужен, когда автомат поднимают
+        # на свежей карте: он набирает границу площадки, а не только
+        # рельсы. Если карту уже накатали руками — пропускать, scan:=false.
+        p('scan', True)
         p('scan_rate', 0.30)            # рад/с на осмотре
+        # Колея. Своей подгонки здесь больше нет, фигуру вписывает
+        # детектор, поэтому число берётся отсюда, а не из данных.
+        p('gauge', 0.526)
+        # Насколько старой может быть поза от детектора. Он публикует её
+        # дважды в секунду; две секунды значат, что он жив и видит рельсы.
+        p('pose_max_age', 2.0)
         p('approach_back', 0.90)        # где встать до начала рельсов, м
         p('align_lat_tol', 0.02)        # допуск по поперечному смещению, м
         p('align_yaw_tol', 0.02)        # допуск по курсу на выверке, рад
@@ -68,6 +78,7 @@ class RailEntry(Node):
         # На рельсах робот идёт 0.34-0.43 от команды — замерено, — а затык
         # даёт ноль, так что порог стоит между ними с запасом.
         p('progress_frac', 0.15)
+        p('stall_windows', 3)           # столько плохих окон подряд — упор
         p('window_s', 1.0)
         p('yaw_abort_deg', 10.0)        # больше — промах, повтор попытки
         p('tilt_abort_deg', 12.0)       # кренится сильнее — стоп немедленно
@@ -85,10 +96,21 @@ class RailEntry(Node):
         #
         # /cmd_nav же он слушает и пропускает только в режиме auto, то
         # есть после осознанного нажатия кнопки. Это и есть защита.
-        self.cmd = self.create_publisher(Twist, 'cmd_nav', 10)
+        # ПИШЕМ В СЫРОЙ ТОПИК, А НЕ ПРЯМО РОБОТУ. Между нами и приводом
+        # стоит cmd_sign: он разворачивает знак поворота (привод робота
+        # понимает его наоборот соглашению ROS) и гасит скорость, если
+        # команды пропали.
+        #
+        # Имя по умолчанию выбрано так НАРОЧНО. Если cmd_sign забудут
+        # поднять, робот не получит ничего и останется стоять. Публикуй
+        # мы сразу в /cmd_nav — та же забывчивость обернулась бы
+        # поворотом в противоположную сторону на полном ходу.
+        self.cmd = self.create_publisher(Twist, 'cmd_nav_raw', 10)
         self.create_subscription(Odometry, 'odom', self.on_odom, 20)
         self.create_subscription(Imu, 'imu', self.on_imu, 20)
         self.create_subscription(PointCloud2, 'obstacles', self.on_cloud, 5)
+        self.create_subscription(PoseStamped, 'rails/pose', self.on_rail_pose,
+                                 5)
         # Маркеры для RViz: ось рельсов, их начало и поза старта заезда.
         # Долговечность transient_local — чтобы RViz, открытый позже,
         # всё равно получил последнюю картинку, а не ждал нового поиска.
@@ -106,6 +128,7 @@ class RailEntry(Node):
         self.hist = []                  # (t, x, y, yaw) для оценки движения
         self.roll = self.pitch = 0.0
         self.rails = None               # (точка на оси, направление, начало)
+        self.rail_pose = None           # готовая поза от детектора
         self.gone = 0.0                 # сколько проехали в текущей попытке
         self.cloud = None
 
@@ -147,6 +170,29 @@ class RailEntry(Node):
         # разных систем, и ошибка выглядела бы как смещение рельсов.
         self.cloud_frame = m.header.frame_id or 'map'
 
+    def on_rail_pose(self, m):
+        """Готовая поза рельсов от детектора: торец и курс вдоль труб.
+
+        ПОЧЕМУ БЕРЁМ ЕЁ, А НЕ СЧИТАЕМ САМИ. Своя подгонка здесь делила
+        точки пополам ПО МЕДИАНЕ поперёк. Загиб П пересекает колею на всю
+        ширину и лежит на той же высоте, что трубы, поэтому при делении
+        пополам его точки обязаны попасть в обе половины и тянут оба
+        центра к середине. Замерено на стенде по 1546 клеткам: колея
+        выходила 496 мм вместо 526, и туда же уезжали ось с направлением.
+
+        Детектор вписывает ИЗВЕСТНУЮ фигуру перебором по позе с уточнением
+        устойчивым МНК, и даёт 524 мм. Считать одно и то же двумя разными
+        способами незачем: расходясь, они дали бы необъяснимое поведение.
+        """
+        q = m.pose.orientation
+        yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
+                         1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        self.rail_pose = (
+            np.array([m.pose.position.x, m.pose.position.y]),
+            np.array([math.cos(yaw), math.sin(yaw)]),
+            m.header.frame_id or 'odom',
+            self.now())
+
     def now(self):
         return self.get_clock().now().nanoseconds * 1e-9
 
@@ -170,6 +216,9 @@ class RailEntry(Node):
 
     # ── ОСМОТР ────────────────────────────────────────────────────────
     def scan(self):
+        if not bool(self.get_parameter('scan').value):
+            self.say('ОСМОТР', 'пропущен: карта уже собрана')
+            return True
         w = float(self.get_parameter('scan_rate').value)
         self.say('ОСМОТР', 'полный оборот на месте, набираем карту')
         t0 = self.now()
@@ -184,6 +233,34 @@ class RailEntry(Node):
     def find_rails(self):
         """Две нитки по зелёным точкам: направление, ось, начало рельсов."""
         self.spin(2.0)
+        # Сперва спрашиваем детектор: у него вписана фигура с известными
+        # размерами, и это лучше всего, что можно получить здесь.
+        age_max = float(self.get_parameter('pose_max_age').value)
+        if self.rail_pose is not None:
+            start, u, frame, got = self.rail_pose
+            age = self.now() - got
+            if age <= age_max:
+                self.cloud_frame = frame
+                self.rails = (start, u, start)
+                self.gauge = float(self.get_parameter('gauge').value)
+                self.publish_markers()
+                # Сверка направления: рельсы обязаны уходить ОТ робота.
+                # Детектор ставит торец на загиб П, а заезжают именно
+                # через него, так что обычно сходится. Если нет — молчать
+                # нельзя, робот поедет не туда.
+                rp = self.pose_xy()
+                if rp is not None and (start - rp) @ u > 0:
+                    self.say('ПОИСК', 'ВНИМАНИЕ: торец рельсов дальше от '
+                                      'робота, чем их продолжение — загиб '
+                                      'может быть не с той стороны')
+                self.say('ПОИСК', f'беру позу от детектора: начало '
+                                  f'x={start[0]:+.2f} y={start[1]:+.2f}, '
+                                  f'направление '
+                                  f'{math.degrees(math.atan2(u[1], u[0])):+.1f}°, '
+                                  f'возраст {age:.1f} с')
+                return True
+            self.say('ПОИСК', f'поза от детектора устарела ({age:.1f} с), '
+                              f'считаю сам')
         P = self.cloud
         if P is None or len(P) < 20:
             self.say('ПОИСК', f'зелёных точек мало ({0 if P is None else len(P)})')
@@ -352,20 +429,9 @@ class RailEntry(Node):
         m.scale.x = m.scale.y = m.scale.z = 0.12
         m.color.r, m.color.g, m.color.b, m.color.a = 1.0, 0.85, 0.1, 0.9
         a.markers.append(m)
-        # Подпись с измеренной колеёй: промах вписывания виден по ней
-        # сразу, если помнить, что настоящая колея 526 мм
-        # (обмер: просвет 470 мм плюс труба 56 мм).
-        t = Marker()
-        t.header = m.header
-        t.ns, t.id = 'rail_entry', 3
-        t.type, t.action = Marker.TEXT_VIEW_FACING, Marker.ADD
-        t.pose.position.x, t.pose.position.y = float(goal[0]), float(goal[1])
-        t.pose.position.z, t.pose.orientation.w = 0.45, 1.0
-        t.scale.z = 0.14
-        t.color.r = t.color.g = t.color.b = t.color.a = 1.0
-        t.text = (f'колея {getattr(self, "gauge", 0.0) * 1000:.0f} мм, '
-                  f'курс {math.degrees(math.atan2(u[1], u[0])):+.0f}°')
-        a.markers.append(t)
+        # Подписи в сцене НЕТ: текстовые маркеры висели в воздухе
+        # растянутыми строками и мешали смотреть на карту. Колея и курс
+        # и так печатаются в строке [ПОИСК] при нахождении рельсов.
         self.mk.publish(a)
 
     def frame(self):
@@ -439,10 +505,12 @@ class RailEntry(Node):
         frac = float(self.get_parameter('progress_frac').value)
         lim = math.radians(float(self.get_parameter('yaw_abort_deg').value))
         tilt = math.radians(float(self.get_parameter('tilt_abort_deg').value))
+        hard = int(self.get_parameter('stall_windows').value)
         start = np.array(self.odom[:2])
         self.say('ЗАЕЗД', f'идём вперёд {need:.2f} м на {v:.2f} м/с')
         t0 = self.now()
         last = t0
+        bad = 0
         while rclpy.ok():
             self.go(vx=v)
             self.spin(0.05)
@@ -471,15 +539,37 @@ class RailEntry(Node):
                 last = self.now()
                 went = self.moved(span)
                 want = v * span
+                # ОДНОГО плохого окна мало. Замерено 9 октября 2026 на
+                # стенде: окна шли 60, 60, 60, 37, 42, 52, 40 и затем 14 мм
+                # при пороге 18 — попытка оборвалась ровно в тот миг, когда
+                # на трубы лезли ЗАДНИЕ колёса. А 14 мм за секунду это всё
+                # ещё движение, и через секунду робот бы дожал.
+                #
+                # Запас frac=0.15 заведён под ПОСТОЯННОЕ падение скорости:
+                # на рельсах радиус качения падает со 101.4 до 50 мм, и
+                # робот идёт вдвое медленнее скомандованного — те самые
+                # 60 мм из 120. Нарастающей нагрузки он не покрывает,
+                # потому что порог считается от КОМАНДЫ, а она постоянна.
+                #
+                # Скорость при этом НЕ поднимаем: регулятор, принявший
+                # падение за отставание, начал бы разгоняться — ровно от
+                # этого заезд и уведён мимо Nav2.
                 if went < want * frac:
-                    self.stop()
-                    self.say('ЗАЕЗД', f'упёрлись: за {span:.1f} с прошли '
+                    bad += 1
+                    self.say('ЗАЕЗД', f'тяжело: за {span:.1f} с прошли '
                                       f'{went * 1000:.0f} мм при ожидаемых '
-                                      f'{want * 1000:.0f}')
-                    return False
-                self.say('ЗАЕЗД', f'едем: {gone:.2f} из {need:.2f} м, '
-                                  f'за окно {went * 1000:.0f} мм, '
-                                  f'курс {math.degrees(e[1]) if e else 0:+.1f}°')
+                                      f'{want * 1000:.0f} — окно {bad} из '
+                                      f'{hard}')
+                    if bad >= hard:
+                        self.stop()
+                        self.say('ЗАЕЗД', f'упёрлись: {hard} окна подряд '
+                                          f'без продвижения')
+                        return False
+                else:
+                    bad = 0
+                    self.say('ЗАЕЗД', f'едем: {gone:.2f} из {need:.2f} м, '
+                                      f'за окно {went * 1000:.0f} мм, '
+                                      f'курс {math.degrees(e[1]) if e else 0:+.1f}°')
             if self.now() - t0 > 4 * need / v + 20:
                 self.stop()
                 self.say('ЗАЕЗД', 'слишком долго')

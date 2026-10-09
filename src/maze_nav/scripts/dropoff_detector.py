@@ -40,6 +40,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CameraInfo, Image, PointCloud2, PointField
 from rclpy.qos import DurabilityPolicy
+from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import Header
 from visualization_msgs.msg import Marker, MarkerArray
 
@@ -448,6 +449,12 @@ class DropoffDetector(Node):
         # Поэтому усреднять цвет внутри клетки нечему и затирать зелёное
         # серым нечем — серого в этом слое нет.
         self.rail_pub = self.create_publisher(PointCloud2, 'rails/map', qos)
+        # Готовая поза рельсов для автомата заезда. Публикуется
+        # ВСЕГДА, независимо от rail_model: модель это картинка, а
+        # поза — рабочие данные, и заезд не должен зависеть от того,
+        # включена ли у кого-то визуализация.
+        self.rail_pose_pub = self.create_publisher(
+            PoseStamped, 'rails/pose', qos)
         self.model_pub = self.create_publisher(
             MarkerArray, 'rails/model',
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
@@ -1176,13 +1183,10 @@ class DropoffDetector(Node):
         m.color.r, m.color.g, m.color.b, m.color.a = (*rgb, 0.75)
         return m
 
-    def publish_rail_model(self, V):
+    def publish_rail_model(self, fit):
         """Фигура с ИЗВЕСТНЫМИ размерами на найденной оси. Совпадёт с
         клетками — значит нашли верно; разойдётся — видно сразу."""
-        fit = self.fit_rails(V)
         a = MarkerArray()
-        if fit is None:
-            return
         axis, u, n, gauge_meas, t0, t1, z, n_on, n_mid, R = fit
         wipe = Marker()
         wipe.header.frame_id = str(
@@ -1226,22 +1230,14 @@ class DropoffDetector(Node):
             if m:
                 a.markers.append(m)
 
-        # Подпись: измеренная колея против истинной. Главный числовой
-        # признак того, попала ли ось куда надо.
-        t = Marker()
-        t.header = a.markers[0].header
-        t.ns, t.id = 'rail_model', mid
-        t.type, t.action = Marker.TEXT_VIEW_FACING, Marker.ADD
-        c = pt((t0 + t1) / 2, 0.0)
-        t.pose.position.x, t.pose.position.y = float(c[0]), float(c[1])
-        t.pose.position.z, t.pose.orientation.w = float(z) + 0.35, 1.0
-        t.scale.z = 0.10
-        t.color.r = t.color.g = t.color.b = t.color.a = 1.0
-        t.text = (f'колея по данным {gauge_meas * 1000:.0f} мм, '
-                  f'истинная {g * 1000:.0f}, длина {t1 - t0:.2f} м, '
-                  f'радиус загиба {R * 1000:.0f} мм, '
-                  f'на трубах {n_on} клеток, на загибе {n_mid}')
-        a.markers.append(t)
+        # ПОДПИСЬ УБРАНА ИЗ СЦЕНЫ. Текстовый маркер висел в воздухе
+        # растянутой строкой и читался кусками, мешая смотреть на карту.
+        # Те же числа уходят в лог раз в пять секунд — там их и смотреть.
+        self.get_logger().info(
+            f'рельсы: колея {gauge_meas * 1000:.0f} мм (истинная '
+            f'{g * 1000:.0f}), длина {t1 - t0:.2f} м, радиус загиба '
+            f'{R * 1000:.0f} мм, клеток на трубах {n_on}, на загибе {n_mid}',
+            throttle_duration_sec=5.0)
         self.model_pub.publish(a)
 
     def publish_rails(self):
@@ -1260,11 +1256,37 @@ class DropoffDetector(Node):
         self.rail_pub.publish(self.cloud(
             v, hdr_stamp,
             frame=str(self.get_parameter('rail_map_frame').value), cols=cols))
-        # Модель рисуется по ТЕМ ЖЕ подтверждённым клеткам, что ушли в
-        # слой. Высоту берём медианную: модель плоская, а клетки занимают
-        # полосу по высоте.
-        if bool(self.get_parameter('rail_model').value):
-            self.publish_rail_model(v)
+        # Подгонка идёт по ТЕМ ЖЕ подтверждённым клеткам, что ушли в
+        # слой, и считается ОДИН раз и кормит обоих потребителей: позу
+        # для заезда и фигуру для глаз. Раньше её звала только отрисовка
+        # модели, и заезд искал ось заново своей копией алгоритма — с
+        # делением по медиане, то есть тем самым, что промахивалось на
+        # сорок миллиметров из-за загиба.
+        fit = self.fit_rails(v)
+        if fit is not None:
+            self.publish_rail_pose(fit)
+            if bool(self.get_parameter('rail_model').value):
+                self.publish_rail_model(fit)
+
+    def publish_rail_pose(self, fit):
+        """Начало рельсов и их направление — то, что нужно заезду.
+
+        Положение это ТОРЕЦ (начало прямых участков), а не середина:
+        автомат отсчитывает от него и точку старта, и пройденный путь.
+        Поворот — курс вдоль рельсов, от торца вдаль.
+        """
+        axis, u, _n, _g, t0, _t1, z = fit[:7]
+        p = axis + u * t0
+        m = PoseStamped()
+        m.header.frame_id = str(self.get_parameter('rail_map_frame').value)
+        m.header.stamp = self.get_clock().now().to_msg()
+        m.pose.position.x = float(p[0])
+        m.pose.position.y = float(p[1])
+        m.pose.position.z = float(z)
+        yaw = math.atan2(float(u[1]), float(u[0]))
+        m.pose.orientation.z = math.sin(0.5 * yaw)
+        m.pose.orientation.w = math.cos(0.5 * yaw)
+        self.rail_pose_pub.publish(m)
 
     def fit_ground(self, P, ok, exclude=None):
         """Опорная плоскость по ближней земле под роботом.
