@@ -57,6 +57,22 @@ def generate_launch_description():
                    Command(['xacro ', urdf]), value_type=str)}])
 
     # ═══ Камера ═══
+    #
+    # ДВЕ КАМЕРЫ НА ВЫБОР, аргумент camera:=realsense|zed. Весь стек ниже
+    # знает ТОЛЬКО три имени топиков, объявленных выше (rgb, info, depth),
+    # и про камеру не осведомлён вовсе. Ветка ZED переименовывает свои
+    # топики в эти же три, поэтому ни RTAB-Map, ни детектор кромки, ни
+    # сегментация рельсов при смене камеры не меняются ни на строку.
+    #
+    # Форматы глубины у них разные — RealSense отдаёт 16UC1 в миллиметрах,
+    # ZED 32FC1 в метрах, — но и это уже учтено: детектор различает их по
+    # полю encoding, а отбор отсчётов идёт через isfinite, что ловит и
+    # NaN от ZED, и нули от RealSense.
+    use_rs = PythonExpression(
+        ["'", LaunchConfiguration('camera'), "' != 'zed'"])
+    use_zed = PythonExpression(
+        ["'", LaunchConfiguration('camera'), "' == 'zed'"])
+
     camera = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('realsense2_camera'), 'launch',
@@ -94,7 +110,112 @@ def generate_launch_description():
             'enable_gyro': LaunchConfiguration('cam_imu'),
             'enable_accel': LaunchConfiguration('cam_imu'),
             'initial_reset': 'false',
-        }.items())
+        }.items(),
+        condition=IfCondition(use_rs))
+
+    # ═══ Камера: ветка ZED ═══
+    #
+    # Переименование делает SetRemap в группе: обёртка ZED публикует под
+    # своими именами, а наружу они выходят теми же тремя, что и у
+    # RealSense. Глубина у ZED уже совмещена с цветом, отдельного
+    # выравнивания (align_depth) не требуется.
+    #
+    # СВОИ ПРЕОБРАЗОВАНИЯ И ПРИВЯЗКУ ВЫКЛЮЧАЕМ. ZED умеет считать
+    # собственную одометрию и публиковать map->odom, но этим у нас
+    # занимается RTAB-Map. Два источника одного преобразования дают
+    # рваное дерево TF и карту, которая дёргается, — мы это уже проходили
+    # с двумя robot_state_publisher.
+    zed = GroupAction(
+        condition=IfCondition(use_zed),
+        actions=[
+            # ИМЕНА СНЯТЫ С ЖИВОГО УЗЛА, а не взяты из памяти. В обёртке
+            # 5.5 они не такие, как в прежних выпусках: цветной кадр
+            # теперь rgb/color/rect/image, а не rgb/image_rect_color.
+            # Если камера перестанет доходить до RTAB-Map после
+            # обновления обёртки — первым делом сверить этот список с
+            # разделом «PUBLISHED TOPICS» в её логе при старте.
+            SetRemap('/zed/zed_node/rgb/color/rect/image', rgb),
+            SetRemap('/zed/zed_node/rgb/color/rect/camera_info', info),
+            SetRemap('/zed/zed_node/depth/depth_registered', depth),
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(os.path.join(
+                    get_package_share_directory('zed_wrapper'), 'launch',
+                    'zed_camera.launch.py')),
+                launch_arguments={
+                    'camera_model': 'zedm',
+                    'camera_name': 'zed',
+                    # РАЗРЕШЕНИЕ И ТЕМП СНИЖЕНЫ НАМЕРЕННО.
+                    #
+                    # По умолчанию ZED отдаёт 1920x1080 на тридцати
+                    # герцах. Замерено, что с этим связка не справляется:
+                    # обработка кадра в RTAB-Map занимала до 1.2 с при
+                    # темпе 0.5 с, задержки доходили до 1.6 с, одометрия
+                    # шла 11 Гц при кадрах 27 — то есть между двумя
+                    # обработанными кадрами камера успевала уехать, и
+                    # сопоставление валилось с «Not enough inliers 0/15».
+                    # Каждый такой провал сбрасывает одометрию, а сброс
+                    # начинает НОВУЮ карту: в рабочей памяти набралось 799
+                    # узлов, не связанных между собой, и единой карты не
+                    # получалось вовсе.
+                    #
+                    # HD720 это 1280x720 против 848x480 у RealSense —
+                    # всё ещё вдвое больше, но уже посильно. Если и этого
+                    # много, следующая ступень VGA (672x376).
+                    'param_overrides': PythonExpression([
+                        "'general.grab_resolution:=' + '",
+                        LaunchConfiguration('zed_res'),
+                        "' + ';general.pub_frame_rate:=' + '",
+                        LaunchConfiguration('zed_fps'), "'"]),
+                    'publish_tf': 'false',
+                    'publish_map_tf': 'false',
+                    # А ВОТ СВЯЗКУ ИНС С КОРПУСОМ ПУБЛИКОВАТЬ НАДО.
+                    # Это отдельный ключ, и по умолчанию он false. Без
+                    # него кадра zed_imu_link в дереве нет, хотя
+                    # сообщения ИНС на него ссылаются, и одометрия
+                    # отказывается её принимать:
+                    #   «Dropping imu data! A valid TF between
+                    #    camera_link and zed_imu_link is required»
+                    # Сам узел при этом молча пишет в лог
+                    # «Broadcast IMU TF: FALSE» — заметить легко только
+                    # задним числом.
+                    'publish_imu_tf': 'true',
+                    # publish_urdf ОСТАЁТСЯ ВКЛЮЧЁННЫМ, и это не
+                    # недосмотр. Сперва я его выключил, рассудив, что
+                    # описание камеры нам ни к чему: своё есть. Узел
+                    # после этого вставал на «Starting Positional
+                    # Tracking / Waiting for valid static
+                    # transformations» и кадры не публиковал вовсе —
+                    # привязка ждёт преобразований, которые публикует
+                    # именно этот издатель.
+                    #
+                    # Выключены только publish_tf и publish_map_tf:
+                    # odom->base и map->odom дают rgbd_odometry и
+                    # RTAB-Map, а два источника одного преобразования
+                    # рвут дерево TF.
+                    'publish_urdf': 'true',
+                }.items()),
+            # СВЯЗКА С РОБОТОМ. Узел ZED публикует свою цепочку кадров
+            # (zed_camera_link -> ... -> zed_left_camera_frame_optical), но
+            # её корень ни к чему не прицеплен: для TF это отдельное
+            # дерево. RTAB-Map не смог бы пересчитать глубину в кадр
+            # робота и отказался бы работать вовсе.
+            #
+            # ГЕОМЕТРИЯ ЗДЕСЬ ЗАГЛУШКА — нули. ZED встаёт ровно туда, где
+            # в URDF стоит RealSense, вместе с его наклоном 50.1° и
+            # высотой 723 мм. Это заведомо неверно: у камер разные
+            # габариты и разное положение оптического центра. Для
+            # проверки «есть ли картинка и облако» годится, ездить по
+            # такой карте НЕЛЬЗЯ.
+            #
+            # Когда крепление измерят, числа ставятся сюда: смещение в
+            # метрах и поворот в радианах от camera_link к zed_camera_link.
+            Node(package='tf2_ros', executable='static_transform_publisher',
+                 name='zed_mount', output='log',
+                 arguments=['--frame-id', 'camera_link',
+                            '--child-frame-id', 'zed_camera_link',
+                            '--x', '0', '--y', '0', '--z', '0',
+                            '--roll', '0', '--pitch', '0', '--yaw', '0']),
+        ])
 
     # ═══ ИНС ═══
     pico = Node(package='maze_nav', executable='pico_imu_node.py',
@@ -325,14 +446,28 @@ def generate_launch_description():
     nav2 = GroupAction(
         condition=IfCondition(LaunchConfiguration('nav2')),
         actions=[
-            SetRemap('cmd_vel_smoothed', '/cmd_nav'),
+            SetRemap('cmd_vel_smoothed', '/cmd_nav_raw'),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(os.path.join(
                     get_package_share_directory('nav2_bringup'), 'launch',
                     'navigation_launch.py')),
+                # Глушим ОДИН логгер. computeCircumscribedCost сыпет
+                # ошибкой каждый такт, потому что раздувание 0.55 меньше
+                # описанного радиуса 0.772 (кузов 1.22 x 0.90 плюс
+                # footprint_padding 0.01). Это не поломка: Nav2 лишь
+                # сообщает, что не может срезать проверку столкновений по
+                # полю стоимости и проверяет весь полигон. Он и так его
+                # проверяет — у CostCritic стоит consider_footprint, — а
+                # поднять раздувание до 0.772 нельзя: площадка около двух
+                # метров, и свободного места не осталось бы вовсе
+                # (разбор у inflation_radius в agro_nav2.yaml).
+                # Остальные логгеры остаются на info.
                 launch_arguments={'use_sim_time': 'false',
                                   'params_file': nav_params,
-                                  'use_composition': 'False'}.items()),
+                                  'use_composition': 'False',
+                                  'log_level':
+                                      'computeCircumscribedCost:=fatal'
+                                  }.items()),
         ])
 
     # Детектор обрыва: кромка платформы по глубине. На железе рельсов
@@ -353,6 +488,20 @@ def generate_launch_description():
     # препятствий: при сегментации в 2 Гц зелёного в карте почти не
     # остаётся, и вписывание колеи садится мимо — проверено в симуляторе,
     # колея выходила 261 мм вместо 545.
+    # ПОСЛЕДНИЙ УЗЕЛ ПЕРЕД РОБОТОМ. Разворачивает знак поворота и гасит
+    # скорость при пропаже команд. Подробности и дата замера — в самом
+    # cmd_sign.py. Поднимается всегда, когда что-то может поехать: и при
+    # nav2, и при entry, потому что пишут в /cmd_nav_raw оба.
+    sign = Node(package='maze_nav', executable='cmd_sign.py',
+                name='cmd_sign', output='screen',
+                parameters=[{'angular_z_sign': ParameterValue(
+                    LaunchConfiguration('wz_sign'), value_type=float)}],
+                condition=IfCondition(PythonExpression([
+                    "'", LaunchConfiguration('nav2'), "' == 'true' or '",
+                    LaunchConfiguration('entry'), "' == 'true'"])),
+                remappings=[('cmd_nav_raw', '/cmd_nav_raw'),
+                            ('cmd_nav', '/cmd_nav')])
+
     entry = Node(package='maze_nav', executable='rail_entry.py',
                  output='screen',
                  condition=IfCondition(LaunchConfiguration('entry')),
@@ -376,6 +525,13 @@ def generate_launch_description():
                                           'курс уходит на градусы в минуту'),
         DeclareLaunchArgument('accel_bias', default_value='[0.0, 0.0, 0.0]',
                               description='смещение нуля акселерометра, м/с²'),
+        DeclareLaunchArgument('zed_res', default_value='HD720',
+                              description='разрешение ZED: HD2K, HD1080, '
+                                          'HD720, VGA'),
+        DeclareLaunchArgument('zed_fps', default_value='15.0',
+                              description='темп публикации кадров ZED, Гц'),
+        DeclareLaunchArgument('camera', default_value='realsense',
+                              description='какая камера: realsense или zed'),
         DeclareLaunchArgument('profile', default_value='848x480x30',
                               description='на порту USB2 нужно 640x480x15'),
         DeclareLaunchArgument('db', default_value='/datasets/robot_map.db',
@@ -386,8 +542,11 @@ def generate_launch_description():
                                           'продолжать в уже существующей'),
         DeclareLaunchArgument('dropoff', default_value='false',
                               description='искать кромку площадки по '
-                                          'глубине; нужен наклон камеры '
-                                          '30-35 градусов'),
+                                          'глубине; заодно переводит SLAM '
+                                          'на ветку с кромкой. Отлажен на '
+                                          'стенде при наклоне камеры около '
+                                          '50 градусов — нынешние 49 в '
+                                          'URDF как раз в этом диапазоне'),
         DeclareLaunchArgument('cam_imu', default_value='false',
                               description='включить собственную ИНС D435i; '
                                           'нужна для калибровки угла камеры'),
@@ -408,7 +567,15 @@ def generate_launch_description():
         DeclareLaunchArgument('nav2', default_value='false',
                               description='планировщик; скорость уходит '
                                           'в /cmd_nav'),
+        DeclareLaunchArgument('wz_sign', default_value='1.0',
+                              description='знак поворота перед роботом. '
+                              '1.0 — без разворота: 9 октября 2026 в репе '
+                              'робота кинематика приведена к REP-103 '
+                              '(fl = vx - vy - lw*wz), и +wz даёт левое '
+                              'вращение. -1.0 — для прошивки до того '
+                              'исправления, иначе инвертор развернёт '
+                              'уже верный знак обратно'),
         DeclareLaunchArgument('rviz', default_value='true'),
-        rsp, camera, pico, madgwick, odom_imu, odom_plain, entry,
-        slam_plain, slam_edge, dropoff, nav2, rviz,
+        rsp, camera, zed, pico, madgwick, odom_imu, odom_plain, entry,
+        slam_plain, slam_edge, dropoff, nav2, sign, rviz,
     ])
