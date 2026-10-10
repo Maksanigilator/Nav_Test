@@ -9,6 +9,8 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <!-- Действия заезда и съезда: их объявляет rail_server.py. -->
+  <exec_depend>maze_nav_interfaces</exec_depend>
   <exec_depend>visualization_msgs</exec_depend>
   <exec_depend>ros_gz_sim</exec_depend>
   <exec_depend>ros_gz_bridge</exec_depend>

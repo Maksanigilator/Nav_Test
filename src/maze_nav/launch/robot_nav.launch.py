@@ -490,23 +490,33 @@ def generate_launch_description():
     # колея выходила 261 мм вместо 545.
     # ПОСЛЕДНИЙ УЗЕЛ ПЕРЕД РОБОТОМ. Разворачивает знак поворота и гасит
     # скорость при пропаже команд. Подробности и дата замера — в самом
-    # cmd_sign.py. Поднимается всегда, когда что-то может поехать: и при
-    # nav2, и при entry, потому что пишут в /cmd_nav_raw оба.
+    # cmd_sign.py.
+    #
+    # Поднимается БЕЗУСЛОВНО. Раньше условие перечисляло тех, кто пишет в
+    # /cmd_nav_raw, и список пришлось бы продлевать с каждым новым
+    # источником. Простаивающий ретранслятор не стоит ничего, а забытый
+    # означает, что команды уходят в никуда.
     sign = Node(package='maze_nav', executable='cmd_sign.py',
                 name='cmd_sign', output='screen',
                 parameters=[{'angular_z_sign': ParameterValue(
                     LaunchConfiguration('wz_sign'), value_type=float)}],
-                condition=IfCondition(PythonExpression([
-                    "'", LaunchConfiguration('nav2'), "' == 'true' or '",
-                    LaunchConfiguration('entry'), "' == 'true'"])),
                 remappings=[('cmd_nav_raw', '/cmd_nav_raw'),
                             ('cmd_nav', '/cmd_nav')])
 
-    entry = Node(package='maze_nav', executable='rail_entry.py',
-                 output='screen',
-                 condition=IfCondition(LaunchConfiguration('entry')),
-                 remappings=[('odom', '/odom'), ('imu', '/imu/data'),
-                             ('obstacles', '/rails/map')])
+    # СЕРВЕР РЕЛЬСОВ. Поднимается ВСЕГДА и спит до вызова.
+    #
+    # Раньше здесь был ключ entry:=true, поднимавший однократный сценарий
+    # вместе со стеком. Это была ловушка: сценарий стартовал РАНЬШЕ
+    # сегментации, не находил зелёных точек и молча завершался — снаружи
+    # выглядело как «заезд не едет», причём процесса в ps уже не было.
+    #
+    # Сервер пропустить ничего не может: он ничего не делает, пока ему не
+    # отправят цель в /rail_entry или /rail_exit. Поэтому и условия у него
+    # нет — простаивающий узел не стоит ничего.
+    rail_server = Node(package='maze_nav', executable='rail_server.py',
+                       name='rail_server', output='screen',
+                       remappings=[('odom', '/odom'), ('imu', '/imu/data'),
+                                   ('obstacles', '/rails/map')])
 
     rviz = Node(package='rviz2', executable='rviz2', output='screen',
                 condition=IfCondition(LaunchConfiguration('rviz')),
@@ -560,10 +570,6 @@ def generate_launch_description():
                                           'Крен, тангаж и высота обнуляются — '
                                           'для ровного настила это правда, а '
                                           'не упрощение'),
-        DeclareLaunchArgument('entry', default_value='false',
-                              description='автомат заезда на рельсы; '
-                                          'ОСТОРОЖНО: сразу начинает крутить '
-                                          'робота и ехать'),
         DeclareLaunchArgument('nav2', default_value='false',
                               description='планировщик; скорость уходит '
                                           'в /cmd_nav'),
@@ -576,6 +582,7 @@ def generate_launch_description():
                               'исправления, иначе инвертор развернёт '
                               'уже верный знак обратно'),
         DeclareLaunchArgument('rviz', default_value='true'),
-        rsp, camera, zed, pico, madgwick, odom_imu, odom_plain, entry,
+        rsp, camera, zed, pico, madgwick, odom_imu, odom_plain,
+        rail_server,
         slam_plain, slam_edge, dropoff, nav2, sign, rviz,
     ])

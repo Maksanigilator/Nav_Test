@@ -1,8 +1,30 @@
 #!/usr/bin/env python3
-"""Автомат заезда робота на рельсы.
+"""Сервер заезда на рельсы и съезда с них.
 
-Последовательность: ОСМОТР -> ПОИСК -> ПОДХОД -> ВЫВЕРКА -> ЗАЕЗД ->
-КОНТРОЛЬ, и ОТКАТ с повтором, если заезд не удался.
+Узел ЖИВЁТ ПОСТОЯННО и ничего не делает, пока его не позовут. Поднимается
+вместе со стеком и предоставляет два действия:
+
+    /rail_entry   заезд с произвольной точки настила на рельсы
+    /rail_exit    съезд с рельсов задним ходом
+
+ПОЧЕМУ СЕРВЕР, А НЕ ОДНОКРАТНЫЙ СЦЕНАРИЙ. Раньше это был скрипт, который
+отрабатывал один раз и выходил. Поднятый вместе с запуском, он успевал
+стартовать РАНЬШЕ сегментации, не находил зелёных точек и молча завершался;
+снаружи это выглядело как «заезд не едет», причём процесса в ps уже не было.
+Сервер эту ловушку снимает конструктивно: пропустить ему нечего, он спит.
+
+ПОЧЕМУ ДВА ДЕЙСТВИЯ, А НЕ ОДНО С ПОЛЕМ РЕЖИМА. У заезда и съезда разные
+предусловия (на настиле / на рельсах) и разные признаки успеха. Поле режима
+— зародыш мешанины: следом захочется enter_and_exit, потом ещё пара. Nav2
+по той же причине держит Spin, BackUp и DriveOnHeading отдельно.
+
+ПОЧЕМУ В ОДНОМ УЗЛЕ. Они делят состояние — позу рельсов, одометрию,
+подписку на облако — и никогда не должны идти одновременно. В одном
+процессе взаимное исключение это одна проверка, а не договорённость
+между двумя узлами.
+
+Последовательность заезда: ОСМОТР -> ПОИСК -> ПОДХОД -> ВЫВЕРКА -> ЗАЕЗД,
+и ОТКАТ с повтором, если заезд не удался.
 
 Разделение труда между Nav2 и собственным управлением намеренное.
 
@@ -14,15 +36,23 @@ Nav2 ведёт только ПОДХОД — проезд по настилу �
 радиус качения падает со 101.4 до 50 мм, робот идёт примерно вдвое
 медленнее скомандованного, и любой регулятор, считающий это отставанием,
 начнёт разгоняться. Вторая: на рельсах свободы манёвра нет вовсе, доворот
-допустим в пределах ±10°, а всё сверх того — это промах, который надо
+допустим в пределах +-10°, а всё сверх того — это промах, который надо
 признать и повторить, а не выправлять на ходу.
 
 Успех заезда определяется по одному признаку: продвигается робот вперёд
 или стоит. Знать при этом правильную скорость не нужно и вредно — робот
 при заезде подкренивается и может застрять в этом положении, и тогда важно
 только то, что он перестал двигаться.
+
+ПОТОКИ. Узел крутит MultiThreadedExecutor, а все обратные вызовы сидят в
+одной реентерабельной группе. Это обязательно: тело действия выполняется
+в потоке исполнителя и ДОЛГО блокируется, а подписки обязаны продолжать
+обновляться — иначе одометрия замрёт ровно тогда, когда она нужнее всего.
+По той же причине внутри фаз нельзя звать rclpy.spin_once: узел уже
+крутится, и крутить его вторично нельзя.
 """
 import math
+import threading
 import time
 
 import numpy as np
@@ -33,7 +63,11 @@ import tf2_ros
 from geometry_msgs.msg import Point, PoseStamped, Twist
 from nav2_msgs.action import NavigateToPose
 from nav_msgs.msg import Odometry
-from rclpy.action import ActionClient
+from maze_nav_interfaces.action import RailEntry, RailExit
+from rclpy.action import (ActionClient, ActionServer, CancelResponse,
+                          GoalResponse)
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
 from sensor_msgs.msg import Imu, PointCloud2
@@ -49,14 +83,14 @@ def wrap(a):
     return (a + math.pi) % (2 * math.pi) - math.pi
 
 
-class RailEntry(Node):
+class RailServer(Node):
     def __init__(self):
-        super().__init__('rail_entry')
+        super().__init__('rail_server')
         p = self.declare_parameter
-        # Прокрут на месте перед поиском. Нужен, когда автомат поднимают
-        # на свежей карте: он набирает границу площадки, а не только
-        # рельсы. Если карту уже накатали руками — пропускать, scan:=false.
-        p('scan', True)
+        # Прокрута на месте ЗДЕСЬ НЕТ НАРОЧНО: он приходит полем scan в
+        # цели действия, а не параметром узла. Узел живёт постоянно и
+        # обслуживает разные вызовы — одному нужен осмотр на свежей карте,
+        # другому нет, и общий параметр на оба не натянешь.
         p('scan_rate', 0.30)            # рад/с на осмотре
         # Колея. Своей подгонки здесь больше нет, фигуру вписывает
         # детектор, поэтому число берётся отсюда, а не из данных.
@@ -86,6 +120,8 @@ class RailEntry(Node):
         # Запас к пути отката сверх пройденного вперёд. Нужен, потому что
         # вперёд и назад робот идёт по слегка разным дугам.
         p('retreat_margin', 0.15)
+        # Съезд: сколько отъехать назад, если в цели не задано.
+        p('exit_distance', 1.50)
 
         # ПО УМОЛЧАНИЮ ПУБЛИКУЕМ В cmd_nav, а не в cmd_vel.
         #
@@ -105,12 +141,21 @@ class RailEntry(Node):
         # поднять, робот не получит ничего и останется стоять. Публикуй
         # мы сразу в /cmd_nav — та же забывчивость обернулась бы
         # поворотом в противоположную сторону на полном ходу.
+        # ОДНА РЕЕНТЕРАБЕЛЬНАЯ ГРУППА НА ВСЁ. Тело действия блокируется
+        # надолго, и подписки обязаны обновляться параллельно ему: иначе
+        # одометрия замрёт ровно на заезде, когда по ней считается
+        # продвижение. С группой по умолчанию (взаимно исключающей) они
+        # встали бы в очередь за телом действия и не выполнились бы ни разу.
+        self.cbg = ReentrantCallbackGroup()
         self.cmd = self.create_publisher(Twist, 'cmd_nav_raw', 10)
-        self.create_subscription(Odometry, 'odom', self.on_odom, 20)
-        self.create_subscription(Imu, 'imu', self.on_imu, 20)
-        self.create_subscription(PointCloud2, 'obstacles', self.on_cloud, 5)
+        self.create_subscription(Odometry, 'odom', self.on_odom, 20,
+                                 callback_group=self.cbg)
+        self.create_subscription(Imu, 'imu', self.on_imu, 20,
+                                 callback_group=self.cbg)
+        self.create_subscription(PointCloud2, 'obstacles', self.on_cloud, 5,
+                                 callback_group=self.cbg)
         self.create_subscription(PoseStamped, 'rails/pose', self.on_rail_pose,
-                                 5)
+                                 5, callback_group=self.cbg)
         # Маркеры для RViz: ось рельсов, их начало и поза старта заезда.
         # Долговечность transient_local — чтобы RViz, открытый позже,
         # всё равно получил последнюю картинку, а не ждал нового поиска.
@@ -119,8 +164,10 @@ class RailEntry(Node):
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         # Переиздаём раз в секунду: маркеры живут между фазами, а показать
         # их надо и тому, кто подключился в середине заезда.
-        self.create_timer(1.0, self.publish_markers)
-        self.nav = ActionClient(self, NavigateToPose, 'navigate_to_pose')
+        self.create_timer(1.0, self.publish_markers,
+                          callback_group=self.cbg)
+        self.nav = ActionClient(self, NavigateToPose, 'navigate_to_pose',
+                                callback_group=self.cbg)
         self.buf = tf2_ros.Buffer()
         tf2_ros.TransformListener(self.buf, self)
 
@@ -131,6 +178,28 @@ class RailEntry(Node):
         self.rail_pose = None           # готовая поза от детектора
         self.gone = 0.0                 # сколько проехали в текущей попытке
         self.cloud = None
+        self.attempt = 0
+
+        # ОДНА ЦЕЛЬ ЗА РАЗ. Отклоняем вторую, а не вытесняем первую:
+        # вытеснение посреди заезда означало бы бросить робота на трубах
+        # с недоговорённым состоянием.
+        self._lock = threading.Lock()
+        self._busy = False
+        self._gh = None                 # текущая цель, для проверки отмены
+        self._emit = None               # куда слать обратную связь
+        self._nav_gh = None             # цель Nav2, чтобы гасить её при отмене
+
+        self.entry_srv = ActionServer(
+            self, RailEntry, 'rail_entry',
+            execute_callback=self.execute_entry,
+            goal_callback=self.on_goal, cancel_callback=self.on_cancel,
+            callback_group=self.cbg)
+        self.exit_srv = ActionServer(
+            self, RailExit, 'rail_exit',
+            execute_callback=self.execute_exit,
+            goal_callback=self.on_goal, cancel_callback=self.on_cancel,
+            callback_group=self.cbg)
+        self.get_logger().info('сервер рельсов готов: /rail_entry, /rail_exit')
 
     # ── данные ────────────────────────────────────────────────────────
     def on_odom(self, m):
@@ -197,9 +266,23 @@ class RailEntry(Node):
         return self.get_clock().now().nanoseconds * 1e-9
 
     def spin(self, sec):
+        """Пауза внутри фазы.
+
+        Здесь НЕЛЬЗЯ звать rclpy.spin_once: узел уже крутит исполнитель в
+        другом потоке, и крутить его вторично нельзя. Подписки обновляются
+        сами, нам достаточно подождать.
+
+        Заодно это единственная точка, где отмена прерывает любую фазу:
+        все они ждут через spin, так что проверка здесь избавляет от
+        необходимости рассыпать её по всем циклам.
+        """
         t0 = self.now()
-        while self.now() - t0 < sec and rclpy.ok():
-            rclpy.spin_once(self, timeout_sec=0.02)
+        while self.now() - t0 < sec and rclpy.ok() and not self.cancelled():
+            time.sleep(0.02)
+
+    def cancelled(self):
+        gh = self._gh
+        return gh is not None and gh.is_cancel_requested
 
     def go(self, vx=0.0, vy=0.0, wz=0.0):
         t = Twist()
@@ -207,22 +290,37 @@ class RailEntry(Node):
         self.cmd.publish(t)
 
     def stop(self):
+        # Пауза здесь СВОЯ, не через spin: тот прерывается по отмене, а
+        # остановка обязана отработать именно на отмене. Иначе нули не
+        # уйдут, и робот доедет на последней принятой скорости.
         for _ in range(3):
             self.go()
-            self.spin(0.05)
+            time.sleep(0.05)
 
     def say(self, state, msg):
+        """В журнал и, если цель выполняется, в обратную связь действия.
+
+        Одна точка на все фазы: что видно в логе, то же приходит
+        вызывающему с --feedback. Расхождению между ними взяться неоткуда.
+        """
         self.get_logger().info(f'[{state}] {msg}')
+        emit = self._emit
+        if emit is not None:
+            try:
+                emit(state, msg)
+            except Exception:
+                pass
 
     # ── ОСМОТР ────────────────────────────────────────────────────────
-    def scan(self):
-        if not bool(self.get_parameter('scan').value):
+    def scan(self, enabled):
+        if not enabled:
             self.say('ОСМОТР', 'пропущен: карта уже собрана')
             return True
         w = float(self.get_parameter('scan_rate').value)
         self.say('ОСМОТР', 'полный оборот на месте, набираем карту')
         t0 = self.now()
-        while self.now() - t0 < 2 * math.pi / w and rclpy.ok():
+        while (self.now() - t0 < 2 * math.pi / w and rclpy.ok()
+               and not self.cancelled()):
             self.go(wz=w)
             self.spin(0.05)
         self.stop()
@@ -354,16 +452,31 @@ class RailEntry(Node):
         g.pose.pose.position.y = float(goal_xy[1])
         g.pose.pose.orientation.z = math.sin(yaw / 2)
         g.pose.pose.orientation.w = math.cos(yaw / 2)
+        # ЖДЁМ БУДУЩЕЕ ОПРОСОМ, А НЕ spin_until_future_complete.
+        # Та функция крутит узел сама, а его уже крутит исполнитель —
+        # второй раз нельзя. Исполнитель и так обслуживает ответы Nav2 в
+        # соседнем потоке, нам остаётся только подождать результата.
         fut = self.nav.send_goal_async(g)
-        rclpy.spin_until_future_complete(self, fut, timeout_sec=15.0)
-        gh = fut.result()
+        t0 = self.now()
+        while not fut.done() and self.now() - t0 < 15 and rclpy.ok():
+            time.sleep(0.05)
+        gh = fut.result() if fut.done() else None
         if gh is None or not gh.accepted:
             self.say('ПОДХОД', 'цель не принята')
             return False
+        # Держим цель Nav2: при отмене её надо погасить, иначе планировщик
+        # продолжит везти робота после того, как мы сдались.
+        self._nav_gh = gh
         res = gh.get_result_async()
         t0 = self.now()
         while not res.done() and self.now() - t0 < 120 and rclpy.ok():
-            rclpy.spin_once(self, timeout_sec=0.2)
+            if self.cancelled():
+                self.say('ПОДХОД', 'отмена — гашу цель Nav2')
+                gh.cancel_goal_async()
+                self._nav_gh = None
+                return False
+            time.sleep(0.05)
+        self._nav_gh = None
         ok = res.done() and res.result().status == 4
         self.say('ПОДХОД', 'доехали' if ok else 'не доехал')
         return ok
@@ -445,6 +558,8 @@ class RailEntry(Node):
         Считается в кадре карты и переводится в кадр робота: так ошибка не
         зависит от того, насколько робот уже повернулся.
         """
+        if self.rails is None:
+            return None
         try:
             tr = self.buf.lookup_transform(self.frame(), 'base_footprint',
                                            rclpy.time.Time())
@@ -462,7 +577,8 @@ class RailEntry(Node):
         yaw_tol = float(self.get_parameter('align_yaw_tol').value)
         k = float(self.get_parameter('align_gain').value)
         t0 = self.now()
-        while self.now() - t0 < float(self.get_parameter('align_timeout').value):
+        while (self.now() - t0 < float(self.get_parameter('align_timeout').value)
+               and not self.cancelled()):
             e = self.rail_error()
             if e is None:
                 self.spin(0.1)
@@ -498,9 +614,8 @@ class RailEntry(Node):
             return 0.0
         return math.hypot(h[-1][1] - h[0][1], h[-1][2] - h[0][2])
 
-    def drive(self):
+    def drive(self, need):
         v = float(self.get_parameter('drive_speed').value)
-        need = float(self.get_parameter('drive_distance').value)
         span = float(self.get_parameter('window_s').value)
         frac = float(self.get_parameter('progress_frac').value)
         lim = math.radians(float(self.get_parameter('yaw_abort_deg').value))
@@ -511,7 +626,7 @@ class RailEntry(Node):
         t0 = self.now()
         last = t0
         bad = 0
-        while rclpy.ok():
+        while rclpy.ok() and not self.cancelled():
             self.go(vx=v)
             self.spin(0.05)
             gone = float(np.linalg.norm(np.array(self.odom[:2]) - start))
@@ -627,7 +742,7 @@ class RailEntry(Node):
         start = np.array(self.odom[:2])
         self.say('ОТКАТ', f'отходим назад, не дальше {limit:.2f} м')
         t0 = self.now()
-        while rclpy.ok() and self.now() - t0 < 90:
+        while rclpy.ok() and self.now() - t0 < 90 and not self.cancelled():
             p = np.array(self.odom[:2])
             back = float(np.linalg.norm(p - start))
             if back >= limit:
@@ -649,28 +764,196 @@ class RailEntry(Node):
             self.say('ОТКАТ', f'смещение {e[0] * 1000:+.0f} мм, '
                               f'курс {math.degrees(e[1]):+.1f}°')
 
-    # ── всё вместе ────────────────────────────────────────────────────
-    def run(self):
-        self.spin(3.0)
-        if not self.scan():
-            return False
-        if not self.find_rails():
-            return False
-        if not self.approach():
-            return False
-        for attempt in range(1, int(self.get_parameter('retries').value) + 1):
-            self.say('ПОПЫТКА', f'номер {attempt}')
-            here = np.array(self.odom[:2])
-            self.gone = 0.0
-            if not self.align():
-                self.retreat(here, self.gone)
-                continue
-            if self.drive():
-                self.say('ИТОГ', f'ЗАЕХАЛИ с попытки {attempt}')
+    # ── СЪЕЗД ─────────────────────────────────────────────────────────
+    def back_off(self, need):
+        """Назад вдоль оси рельсов на need метров.
+
+        Чем отличается от ОТКАТА. Тот аварийный: ограничен пройденным
+        вперёд путём и нужен лишь затем, чтобы освободить рельсы для
+        следующей попытки. Здесь расстояние задаёт вызывающий, и съезд —
+        самостоятельная цель со своим признаком успеха.
+
+        Сторож упора тот же, что на заезде, и по той же причине: на трубах
+        робот идёт примерно вдвое медленнее скомандованного, так что одного
+        плохого окна мало, нужна выдержка.
+
+        Поперечное смещение гасим на ходу, чтобы выезжать по оси, а не по
+        косой: иначе борт подставляется под кромку. Если рельсы не найдены,
+        rail_error молчит, и съезд идёт просто прямо назад.
+        """
+        v = float(self.get_parameter('drive_speed').value)
+        k = float(self.get_parameter('align_gain').value)
+        span = float(self.get_parameter('window_s').value)
+        frac = float(self.get_parameter('progress_frac').value)
+        hard = int(self.get_parameter('stall_windows').value)
+        start = np.array(self.odom[:2])
+        self.say('СЪЕЗД', f'отходим назад на {need:.2f} м')
+        t0 = self.now()
+        last = t0
+        bad = 0
+        while rclpy.ok() and not self.cancelled():
+            gone = float(np.linalg.norm(np.array(self.odom[:2]) - start))
+            self.gone = gone
+            if gone >= need:
+                self.stop()
+                self.say('СЪЕЗД', f'съехали, назад {gone:.2f} м')
                 return True
-            self.retreat(here, self.gone)
-        self.say('ИТОГ', 'не заехал за все попытки')
+            e = self.rail_error()
+            vy = max(-0.06, min(0.06, -k * e[0])) if e else 0.0
+            wz = max(-0.20, min(0.20, k * e[1])) if e else 0.0
+            self.go(vx=-v, vy=vy, wz=wz)
+            self.spin(0.05)
+            if self.now() - t0 > span + 0.5 and self.now() - last > 0.5:
+                last = self.now()
+                went = self.moved(span)
+                want = v * span
+                if went < want * frac:
+                    bad += 1
+                    self.say('СЪЕЗД', f'тяжело: за {span:.1f} с прошли '
+                                      f'{went * 1000:.0f} мм при ожидаемых '
+                                      f'{want * 1000:.0f} — окно {bad} из '
+                                      f'{hard}')
+                    if bad >= hard:
+                        self.stop()
+                        self.say('СЪЕЗД', f'упёрлись: {hard} окна подряд '
+                                          f'без продвижения')
+                        return False
+                else:
+                    bad = 0
+                    self.say('СЪЕЗД', f'едем: {gone:.2f} из {need:.2f} м, '
+                                      f'за окно {went * 1000:.0f} мм')
+            if self.now() - t0 > 4 * need / v + 20:
+                self.stop()
+                self.say('СЪЕЗД', 'слишком долго')
+                return False
+        self.stop()
         return False
+
+    # ── действия ──────────────────────────────────────────────────────
+    def on_goal(self, goal):
+        with self._lock:
+            if self._busy:
+                self.get_logger().warn('цель отклонена: уже выполняется другая')
+                return GoalResponse.REJECT
+            self._busy = True
+        return GoalResponse.ACCEPT
+
+    def on_cancel(self, gh):
+        # Отмена ТОЛЬКО останавливает. Самовольно откатываться не будем:
+        # если робот стоит верхом на трубах, уезжать без спроса опаснее,
+        # чем остаться на месте и доложить, где он.
+        self.get_logger().warn('пришла отмена — останавливаюсь на месте')
+        return CancelResponse.ACCEPT
+
+    def ready(self, sec=5.0):
+        """Дождаться одометрии: без неё ни одна фаза не умеет мерить путь."""
+        t0 = self.now()
+        while self.odom is None and self.now() - t0 < sec and rclpy.ok():
+            time.sleep(0.05)
+        return self.odom is not None
+
+    def finish(self, gh, result, ok, reason):
+        # Сначала говорим, потом завершаем цель: say шлёт обратную связь, а
+        # на уже завершённой цели это исключение.
+        self.stop()
+        self.say('ИТОГ', reason)
+        result.success = ok
+        result.reason = reason
+        result.gone = float(self.gone)
+        if gh.is_cancel_requested:
+            gh.canceled()
+        elif ok:
+            gh.succeed()
+        else:
+            gh.abort()
+        return result
+
+    def execute_entry(self, gh):
+        res = RailEntry.Result()
+        g = gh.request
+        # Ноль в цели означает «взять умолчание из параметра узла», так что
+        # вызов без аргументов остаётся осмысленным.
+        need = float(g.drive_distance) or float(
+            self.get_parameter('drive_distance').value)
+        tries = int(g.retries) or int(self.get_parameter('retries').value)
+        self.attempt = 0
+        self.gone = 0.0
+
+        def emit(phase, detail):
+            fb = RailEntry.Feedback()
+            fb.phase, fb.detail = phase, detail
+            fb.attempt = int(self.attempt)
+            fb.gone, fb.need = float(self.gone), float(need)
+            e = self.rail_error()
+            fb.lateral = float(e[0]) if e else 0.0
+            fb.yaw_error = float(e[1]) if e else 0.0
+            gh.publish_feedback(fb)
+
+        self._gh, self._emit = gh, emit
+        try:
+            if not self.ready():
+                return self.finish(gh, res, False, 'нет одометрии')
+            if not self.scan(bool(g.scan)):
+                return self.finish(gh, res, False, 'осмотр не удался')
+            if not self.find_rails():
+                return self.finish(gh, res, False, 'рельсы не найдены')
+            if not self.approach():
+                return self.finish(gh, res, False, 'не доехал до точки старта')
+            for attempt in range(1, tries + 1):
+                if self.cancelled():
+                    break
+                self.attempt = attempt
+                self.say('ПОПЫТКА', f'номер {attempt}')
+                here = np.array(self.odom[:2])
+                self.gone = 0.0
+                if not self.align():
+                    self.retreat(here, self.gone)
+                    continue
+                if self.drive(need):
+                    return self.finish(gh, res, True,
+                                       f'ЗАЕХАЛИ с попытки {attempt}')
+                self.retreat(here, self.gone)
+            if self.cancelled():
+                return self.finish(gh, res, False, 'отменено')
+            return self.finish(gh, res, False, 'не заехал за все попытки')
+        finally:
+            self._gh = self._emit = self._nav_gh = None
+            with self._lock:
+                self._busy = False
+
+    def execute_exit(self, gh):
+        res = RailExit.Result()
+        need = float(gh.request.distance) or float(
+            self.get_parameter('exit_distance').value)
+        self.gone = 0.0
+
+        def emit(phase, detail):
+            fb = RailExit.Feedback()
+            fb.phase, fb.detail = phase, detail
+            fb.gone, fb.need = float(self.gone), float(need)
+            e = self.rail_error()
+            fb.lateral = float(e[0]) if e else 0.0
+            fb.yaw_error = float(e[1]) if e else 0.0
+            gh.publish_feedback(fb)
+
+        self._gh, self._emit = gh, emit
+        try:
+            if not self.ready():
+                return self.finish(gh, res, False, 'нет одометрии')
+            # Ось нужна лишь для поперечной поправки. Не нашлась — съезжаем
+            # прямо назад, это хуже, но не повод отказывать: робот стоит на
+            # рельсах, и снять его оттуда важнее.
+            if self.rails is None:
+                self.find_rails()
+            ok = self.back_off(need)
+            if self.cancelled():
+                return self.finish(gh, res, False, 'отменено')
+            return self.finish(gh, res, ok, f'съехали, назад {self.gone:.2f} м'
+                               if ok else 'съехать не удалось')
+        finally:
+            self._gh = self._emit = None
+            with self._lock:
+                self._busy = False
 
 
 def main():
@@ -683,14 +966,23 @@ def main():
     # робот после Ctrl-C так и остаётся ехать. Поэтому контекст живёт до
     # тех пор, пока мы не отправим ноль своими руками.
     rclpy.init(signal_handler_options=rclpy.signals.SignalHandlerOptions.NO)
-    n = RailEntry()
+    n = RailServer()
+    # ИСПОЛНИТЕЛЬ ОБЯЗАТЕЛЬНО МНОГОПОТОЧНЫЙ. Тело действия блокируется на
+    # всё время заезда, и в одном потоке подписки за ним в очередь не
+    # пролезли бы: одометрия замерла бы ровно на заезде.
+    ex = MultiThreadedExecutor()
+    ex.add_node(n)
     try:
-        n.run()
+        ex.spin()
     except KeyboardInterrupt:
         print()
     finally:
         try:
             n.stop()
+        except Exception:
+            pass
+        try:
+            ex.shutdown()
         except Exception:
             pass
         n.destroy_node()

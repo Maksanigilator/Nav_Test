@@ -20,7 +20,7 @@ install(PROGRAMS
   scripts/twist_to_stamped.py
   scripts/dropoff_detector.py
   scripts/rail_oracle.py
-  scripts/rail_entry.py
+  scripts/rail_server.py
   scripts/cmd_sign.py
   scripts/pico_imu_node.py
   scripts/imu_axes.py
