@@ -98,6 +98,33 @@ class RailServer(Node):
         # Насколько старой может быть поза от детектора. Он публикует её
         # дважды в секунду; две секунды значат, что он жив и видит рельсы.
         p('pose_max_age', 2.0)
+        # ОБНОВЛЕНИЕ ОСИ ПО ХОДУ ЗАЕЗДА.
+        #
+        # Раньше ось бралась снимком в ПОИСКЕ и не менялась до конца
+        # прогона. Пока подгонка стоит на месте, это безразлично, а когда
+        # она поплыла — заезд продолжал ехать по устаревшему снимку, и
+        # расхождение было видно только глазом: нарисованная фигура жила
+        # своей жизнью, ось заезда своей.
+        #
+        # Теперь ось подтягивается всё время, пока выполняется цель.
+        p('rail_refresh', True)
+        # Как часто подтягивать. Чаще незачем: детектор публикует позу
+        # раз в rail_publish_period, то есть дважды в секунду.
+        p('rail_refresh_period', 0.4)
+        # СКАЧКИ НЕ ПРИНИМАЕМ. Обновление обязано быть уточнением, а не
+        # подменой цели: если свежая поза разошлась с нынешней больше
+        # этих порогов, верим старой и предупреждаем. Так сорвавшаяся
+        # подгонка (10 октября она уехала целым блоком за площадку) не
+        # уведёт робота за собой, а проявится записью в журнале.
+        #
+        # ПЯТЬ ГРАДУСОВ, А НЕ БОЛЬШЕ, и это связано с yaw_abort_deg (10).
+        # Обновление сдвигает ОТСЧЁТ, от которого считается курсовая
+        # ошибка, значит ошибка меняется ровно на величину сдвига. Будь
+        # допуск обновления больше порога срыва, законное уточнение само
+        # вызывало бы «увело на 10 градусов — это промах». Поэтому он
+        # обязан оставаться заметно ниже.
+        p('rail_refresh_max_yaw', 5.0)     # градусов
+        p('rail_refresh_max_jump', 0.30)   # метров
         p('approach_back', 0.90)        # где встать до начала рельсов, м
         p('align_lat_tol', 0.02)        # допуск по поперечному смещению, м
         p('align_yaw_tol', 0.02)        # допуск по курсу на выверке, рад
@@ -179,6 +206,7 @@ class RailServer(Node):
         self.gone = 0.0                 # сколько проехали в текущей попытке
         self.cloud = None
         self.attempt = 0
+        self._refreshed = 0.0           # когда ось подтягивали в прошлый раз
 
         # ОДНА ЦЕЛЬ ЗА РАЗ. Отклоняем вторую, а не вытесняем первую:
         # вытеснение посреди заезда означало бы бросить робота на трубах
@@ -279,6 +307,47 @@ class RailServer(Node):
         t0 = self.now()
         while self.now() - t0 < sec and rclpy.ok() and not self.cancelled():
             time.sleep(0.02)
+        self.refresh_rails()
+
+    def refresh_rails(self):
+        """Подтянуть ось рельсов к свежей позе детектора.
+
+        Зовётся из spin(), через который ждут ВСЕ фазы, — поэтому
+        обновление само собой идёт от начала цели и до её конца, и нигде
+        больше его прописывать не надо.
+
+        Скачок отвергается: обновление должно уточнять цель, а не
+        подменять её. Это же и защита от сорвавшейся подгонки.
+        """
+        if self._gh is None or self.rails is None:
+            return
+        if not bool(self.get_parameter('rail_refresh').value):
+            return
+        now = self.now()
+        if now - self._refreshed < \
+                float(self.get_parameter('rail_refresh_period').value):
+            return
+        self._refreshed = now
+        if self.rail_pose is None:
+            return
+        start, u, frame, got = self.rail_pose
+        if now - got > float(self.get_parameter('pose_max_age').value):
+            return
+        _axis, u_old, start_old = self.rails
+        dyaw = abs(wrap(math.atan2(u[1], u[0])
+                        - math.atan2(u_old[1], u_old[0])))
+        jump = float(np.linalg.norm(start - start_old))
+        if dyaw > math.radians(
+                float(self.get_parameter('rail_refresh_max_yaw').value)) \
+                or jump > float(
+                    self.get_parameter('rail_refresh_max_jump').value):
+            self.say('ОСЬ', f'свежая поза отвергнута: курс разошёлся на '
+                            f'{math.degrees(dyaw):+.1f}°, начало на '
+                            f'{jump * 1000:.0f} мм — еду по прежней')
+            return
+        self.cloud_frame = frame
+        self.rails = (start, u, start)
+        self.publish_markers()
 
     def cancelled(self):
         gh = self._gh
@@ -895,15 +964,29 @@ class RailServer(Node):
                 return self.finish(gh, res, False, 'нет одометрии')
             if not self.scan(bool(g.scan)):
                 return self.finish(gh, res, False, 'осмотр не удался')
-            if not self.find_rails():
-                return self.finish(gh, res, False, 'рельсы не найдены')
-            if not self.approach():
-                return self.finish(gh, res, False, 'не доехал до точки старта')
+            # ПОИСК И ПОДХОД ВНУТРИ ЦИКЛА, А НЕ ПЕРЕД НИМ.
+            #
+            # Раньше они шли один раз, и вторая попытка выверялась к
+            # ОСИ ИЗ ПЕРВОГО ПОИСКА, с того места, где её оставил откат.
+            # Это неверно по двум причинам. Во-первых, подгонка к этому
+            # моменту могла уточниться — ради того и затевалось
+            # обновление оси, — но обновление отвергает скачки, а между
+            # попытками скачок как раз и надо принять. Во-вторых, откат
+            # по условию выводит робота ПОЛНОСТЬЮ за пределы рельсов,
+            # значит Nav2 снова применим, и ехать на новую точку старта
+            # не только можно, но и нужно.
+            #
+            # Для первой попытки поведение не меняется.
             for attempt in range(1, tries + 1):
                 if self.cancelled():
                     break
                 self.attempt = attempt
                 self.say('ПОПЫТКА', f'номер {attempt}')
+                if not self.find_rails():
+                    return self.finish(gh, res, False, 'рельсы не найдены')
+                if not self.approach():
+                    return self.finish(gh, res, False,
+                                       'не доехал до точки старта')
                 here = np.array(self.odom[:2])
                 self.gone = 0.0
                 if not self.align():

@@ -17,5 +17,5 @@ ros2 action send_goal --feedback /rail_entry \
 
 
 # Съезд
-ros2 action send_goal --feedback /rail_exit \ 
+ros2 action send_goal --feedback /rail_exit \
     maze_nav_interfaces/action/RailExit "{distance: 1.5}"
