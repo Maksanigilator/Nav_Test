@@ -39,6 +39,7 @@ import sensor_msgs_py.point_cloud2 as pc2
 import tf2_ros
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
+from rtabmap_msgs.msg import MapData, MapGraph
 from sensor_msgs.msg import CameraInfo, Image, PointCloud2, PointField
 from rclpy.qos import DurabilityPolicy
 from geometry_msgs.msg import PoseStamped
@@ -296,6 +297,30 @@ class DropoffDetector(Node):
         # неподвижного робота. На ходу участок, мелькнувший однократно, в
         # слой не попадёт — это сознательная плата за чистоту.
         self.declare_parameter('rail_min_hits', 3)
+        # ПРИВЯЗКА СЛОЯ К ГРАФУ RTAB-MAP.
+        #
+        # Без неё слой копится в мировых клетках кадра odom и не
+        # поправляется никогда: клетка говорит «рельс в точке odom (x, y)»,
+        # а это утверждение протухает вместе с дрейфом одометрии. Хуже
+        # того, при сбросе одометрии (Odom/ResetCountdown в запуске)
+        # кадр обнуляется, и весь слой становится неверным СКАЧКОМ, без
+        # всякого признака.
+        #
+        # С привязкой наблюдение хранится относительно УЗЛА графа: «рельс
+        # в 1.2 м от того места, где я стоял на узле 47». Это верно
+        # всегда. Когда граф решит, что узел 47 был в другом месте, рельс
+        # уедет вместе с ним — правильно. Узел пропал из графа (сброс,
+        # уход в долговременную память) — его точки просто не рисуются,
+        # но и не выбрасываются: вернётся узел, вернутся и они.
+        #
+        # false — прежнее поведение, слой в odom. Откат на случай, если
+        # граф окажется недоступен или поведёт себя не так.
+        self.declare_parameter('rail_graph_bind', True)
+        # Наибольшее расхождение метки наблюдения с меткой узла. Узлы
+        # создаются в темпе Rtabmap/DetectionRate (2 Гц), маски приходят
+        # тоже 2 Гц, так что пара обычно находится в пределах четверти
+        # секунды.
+        self.declare_parameter('rail_node_tol', 0.5)
         # ── Модель рельсов: ТОЛЬКО ДЛЯ ГЛАЗ ──
         #
         # Отдельный топик с геометрической фигурой, вписанной в
@@ -445,6 +470,12 @@ class DropoffDetector(Node):
         qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE)
         self.create_subscription(CameraInfo, 'camera_info', self.on_info, sub_qos)
         self.create_subscription(Image, 'depth', self.on_depth, sub_qos)
+        # Граф RTAB-Map. mapGraph несёт позы узлов, но БЕЗ меток времени;
+        # метки есть только в mapData. Поэтому нужны оба: по mapData
+        # узнаём, какому мгновению соответствует узел, по mapGraph —
+        # где этот узел сейчас стоит.
+        self.create_subscription(MapGraph, '/mapGraph', self.on_graph, 1)
+        self.create_subscription(MapData, '/mapData', self.on_map_data, 1)
         # Маска рельсов из оракула (позже — из модели CV). Без неё детектор
         # работает как раньше, просто все препятствия будут одного цвета.
         # Буфер масок с метками времени, см. on_mask.
@@ -458,6 +489,15 @@ class DropoffDetector(Node):
         # не множество: счётчик нужен, чтобы отличить повторяемое
         # наблюдение от случайного, см. rail_min_hits.
         self.rail_vox = {}
+        # Привязка к графу: наблюдения по узлам, позы узлов, метки узлов.
+        # obs[id] — свой воксельный словарь В КАДРЕ УЗЛА, со счётчиками.
+        # Храним именно словарь, а не список точек: так память ограничена
+        # размером сцены, а счётчик попаданий (rail_min_hits) сохраняется.
+        self.obs = {}
+        self.node_pose = {}             # id -> (R, t) в кадре map
+        self.node_stamp = {}            # id -> float, секунды
+        self.graph_dirty = False
+        self.bound = False              # привязка реально работает
         # Накопленные измерения плоскости, см. ground_fit_samples.
         self._gfit = []
         self.create_subscription(Image, 'rails/mask', self.on_mask, sub_qos)
@@ -971,6 +1011,41 @@ class DropoffDetector(Node):
         if len(pb) < 10:
             return
 
+        cell = float(self.get_parameter('rail_voxel').value)
+
+        # ПУТЬ С ПРИВЯЗКОЙ: кладём наблюдение в кадр УЗЛА графа, а не в
+        # мировые клетки. Тогда слой поправится сам, когда граф уточнит
+        # позу узла. Разбор — у параметра rail_graph_bind.
+        if bool(self.get_parameter('rail_graph_bind').value):
+            nid = self.node_for(ns * 1e-9)
+            if nid is not None:
+                pn = self.to_node_frame(pb, stamp, self.node_stamp[nid])
+                if pn is not None:
+                    local = self.obs.setdefault(nid, {})
+                    idx = np.floor(pn / cell).astype(np.int32)
+                    for key in map(tuple, idx):
+                        local[key] = local.get(key, 0) + 1
+                    if not self.bound:
+                        self.get_logger().info(
+                            'слой рельсов привязан к графу RTAB-Map')
+                    self.bound = True
+                    # graph_dirty здесь НЕ ставим. Новое наблюдение само
+                    # по себе слой не меняет: он пересобирается по позам,
+                    # а позы меняет только граф. Ближайшее сообщение
+                    # mapGraph (2 Гц) всё равно придёт с этим узлом и
+                    # вызовет пересборку, так что задержка не больше
+                    # полусекунды, зато нет полной пересборки на каждую
+                    # маску.
+                    return
+
+        # ЗАПАСНОЙ ПУТЬ: граф недоступен или узел не нашёлся — копим
+        # как раньше, прямо в мировые клетки. Слой при этом не
+        # поправляется, но лучше неисправляемый слой, чем никакого.
+        if self.bound:
+            self.get_logger().warn('граф потерян, вернулся к накоплению '
+                                   'в odom без исправления',
+                                   throttle_duration_sec=10.0)
+        self.bound = False
         frame = str(self.get_parameter('rail_map_frame').value)
         try:
             tf = self.buf.lookup_transform(frame, self.base, stamp)
@@ -985,11 +1060,115 @@ class DropoffDetector(Node):
         pm = pb @ self.quat_to_mat(q.x, q.y, q.z, q.w).T + \
             np.array([t.x, t.y, t.z])
 
-        cell = float(self.get_parameter('rail_voxel').value)
         idx = np.floor(pm / cell).astype(np.int32)
         v = self.rail_vox
         for key in map(tuple, idx):
             v[key] = v.get(key, 0) + 1
+
+    def to_node_frame(self, pb, stamp, node_stamp_s):
+        """Точки из кадра робота в кадр узла графа.
+
+        Обе позы берём В ODOM и каждую на СВОЁ мгновение. Между
+        наблюдением и узлом доли секунды, дрейф одометрии за это время
+        пренебрежимо мал, а вот движение самого робота — нет: на 0.1 м/с
+        четверть секунды это 25 мм, ровно воксель. Поэтому разность поз
+        считается честно, а не отбрасывается как малая.
+        """
+        try:
+            a = self.buf.lookup_transform('odom', self.base, stamp)
+            b = self.buf.lookup_transform(
+                'odom', self.base,
+                rclpy.time.Time(nanoseconds=int(node_stamp_s * 1e9)))
+        except tf2_ros.TransformException:
+            return None
+        qa, ta = a.transform.rotation, a.transform.translation
+        qb, tb = b.transform.rotation, b.transform.translation
+        Ra = self.quat_to_mat(qa.x, qa.y, qa.z, qa.w)
+        Rb = self.quat_to_mat(qb.x, qb.y, qb.z, qb.w)
+        Ta = np.array([ta.x, ta.y, ta.z])
+        Tb = np.array([tb.x, tb.y, tb.z])
+        # p_odom = Ra p + Ta;   p_node = Rb^T (p_odom - Tb)
+        return (pb @ Ra.T + Ta - Tb) @ Rb
+
+    # ── привязка слоя к графу RTAB-Map ────────────────────────────────
+    def on_map_data(self, m):
+        """Запоминаем, какому мгновению соответствует узел.
+
+        Берём ТОЛЬКО id и метку: поле data у узла несёт снимки и облака,
+        и трогать его незачем. Метки нужны затем, чтобы сопоставить наше
+        наблюдение с узлом — в mapGraph их нет.
+        """
+        for n in m.nodes:
+            self.node_stamp[int(n.id)] = float(n.stamp)
+
+    def on_graph(self, m):
+        """Новые позы узлов. Если хоть одна сдвинулась — слой пересобрать."""
+        moved = False
+        seen = set()
+        for i, pose in zip(m.poses_id, m.poses):
+            i = int(i)
+            seen.add(i)
+            q, t = pose.orientation, pose.position
+            R = self.quat_to_mat(q.x, q.y, q.z, q.w)
+            T = np.array([t.x, t.y, t.z])
+            old = self.node_pose.get(i)
+            # Порог вчетверо мельче вокселя: сдвиг меньше него слой всё
+            # равно не изменит, а пересборка стоит времени.
+            if old is None or np.abs(old[1] - T).max() > 0.006 \
+                    or np.abs(old[0] - R).max() > 0.004:
+                moved = True
+            self.node_pose[i] = (R, T)
+        # Узлы, пропавшие из графа (сброс одометрии, уход в долговременную
+        # память), удаляем ИЗ ПОЗ, но НЕ из наблюдений: вернётся узел —
+        # вернутся и его точки, уже на правильном месте.
+        gone = set(self.node_pose) - seen
+        if gone:
+            for i in gone:
+                del self.node_pose[i]
+            moved = True
+        if moved:
+            self.graph_dirty = True
+
+    def node_for(self, stamp_s):
+        """Узел, ближайший по времени к наблюдению, или None."""
+        if not self.node_stamp:
+            return None
+        i = min(self.node_stamp, key=lambda k: abs(self.node_stamp[k] - stamp_s))
+        if abs(self.node_stamp[i] - stamp_s) > \
+                float(self.get_parameter('rail_node_tol').value):
+            return None
+        return i
+
+    def rebuild_rails(self):
+        """Собрать слой заново из наблюдений по текущим позам узлов.
+
+        Это и есть всё лечение: наблюдения не трогаются, меняются только
+        позы, по которым их раскладывают. Ровно так поступает и сам
+        RTAB-Map со своей сеткой.
+        """
+        # ЦЕНА. Пересборка идёт по всем узлам и всем их клеткам разом, и
+        # растёт линейно с размером сцены. На стенде это десятки узлов по
+        # сотне-другой клеток, доли миллисекунды. Если сцена станет
+        # большой и это начнёт быть заметно в профиле — пересобирать
+        # только узлы, чьи позы изменились, а остальные держать готовыми.
+        # Пока не усложняем: замеров, что это дорого, нет.
+        cell = float(self.get_parameter('rail_voxel').value)
+        v = {}
+        for i, local in self.obs.items():
+            pose = self.node_pose.get(i)
+            if pose is None:
+                continue                # узел сейчас не размещается
+            R, T = pose
+            keys = np.array(list(local.keys()), np.float64)
+            if not len(keys):
+                continue
+            cnt = np.fromiter(local.values(), np.int32, len(local))
+            pm = (keys + 0.5) * cell @ R.T + T
+            idx = np.floor(pm / cell).astype(np.int32)
+            for key, c in zip(map(tuple, idx), cnt):
+                v[key] = v.get(key, 0) + int(c)
+        self.rail_vox = v
+        self.graph_dirty = False
 
     def fit_rails(self, V):
         """ПОЗА двух труб известной геометрии по накопленным клеткам.
@@ -1200,7 +1379,7 @@ class DropoffDetector(Node):
         """Отрезок трубы цилиндром. Задаём двумя концами: так не ошибиться
         с кватернионом, он выводится из направления."""
         m = Marker()
-        m.header.frame_id = str(self.get_parameter('rail_map_frame').value)
+        m.header.frame_id = self.layer_frame()
         m.header.stamp = self.get_clock().now().to_msg()
         m.ns, m.id = 'rail_model', mid
         m.type, m.action = Marker.CYLINDER, Marker.ADD
@@ -1228,8 +1407,7 @@ class DropoffDetector(Node):
         a = MarkerArray()
         axis, u, n, gauge_meas, t0, t1, z, n_on, n_mid, R = fit
         wipe = Marker()
-        wipe.header.frame_id = str(
-            self.get_parameter('rail_map_frame').value)
+        wipe.header.frame_id = self.layer_frame()
         wipe.header.stamp = self.get_clock().now().to_msg()
         wipe.ns, wipe.action = 'rail_model', Marker.DELETEALL
         a.markers.append(wipe)
@@ -1279,7 +1457,25 @@ class DropoffDetector(Node):
             throttle_duration_sec=5.0)
         self.model_pub.publish(a)
 
+    def layer_frame(self):
+        """Кадр, в котором сейчас живёт слой рельсов.
+
+        При привязке к графу позы узлов приходят в `map`, значит и слой
+        выходит в `map`. Без привязки — прежний `rail_map_frame` (odom).
+        Потребители кадр не предполагают, а читают из заголовка: заезд
+        делает это в on_cloud и on_rail_pose, поэтому переключение им
+        прозрачно.
+        """
+        if self.bound:
+            return 'map'
+        return str(self.get_parameter('rail_map_frame').value)
+
     def publish_rails(self):
+        # Пересобираем слой, только если граф что-то подвинул. Пересборка
+        # идёт по всем узлам сразу, поэтому делать её на каждый кадр
+        # незачем — позы меняются редко, на замыканиях петли.
+        if self.graph_dirty:
+            self.rebuild_rails()
         if not self.rail_vox:
             return
         need = int(self.get_parameter('rail_min_hits').value)
@@ -1293,8 +1489,7 @@ class DropoffDetector(Node):
         cols = np.tile(np.array([[60, 225, 90]], np.uint8), (len(v), 1))
         hdr_stamp = self.get_clock().now().to_msg()
         self.rail_pub.publish(self.cloud(
-            v, hdr_stamp,
-            frame=str(self.get_parameter('rail_map_frame').value), cols=cols))
+            v, hdr_stamp, frame=self.layer_frame(), cols=cols))
         # Подгонка идёт по ТЕМ ЖЕ подтверждённым клеткам, что ушли в
         # слой, и считается ОДИН раз и кормит обоих потребителей: позу
         # для заезда и фигуру для глаз. Раньше её звала только отрисовка
@@ -1317,7 +1512,7 @@ class DropoffDetector(Node):
         axis, u, _n, _g, t0, _t1, z = fit[:7]
         p = axis + u * t0
         m = PoseStamped()
-        m.header.frame_id = str(self.get_parameter('rail_map_frame').value)
+        m.header.frame_id = self.layer_frame()
         m.header.stamp = self.get_clock().now().to_msg()
         m.pose.position.x = float(p[0])
         m.pose.position.y = float(p[1])

@@ -11,6 +11,11 @@ python3 /root/ros_ws/yolo_transport_test/mask_view.py
 
 
 # В контейнере после ./run.sh Запуск заезда на рельсы 
-ros2 run maze_nav rail_entry.py --ros-args \
-    -r odom:=/odom -r imu:=/imu/data -r obstacles:=/rails/map \
-    -p scan:=false -p drive_distance:=1.5
+
+ros2 action send_goal --feedback /rail_entry \
+    maze_nav_interfaces/action/RailEntry "{scan: false, drive_distance: 1.5}"
+
+
+# Съезд
+ros2 action send_goal --feedback /rail_exit \ 
+    maze_nav_interfaces/action/RailExit "{distance: 1.5}"
