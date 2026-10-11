@@ -10,6 +10,12 @@ RUN apt-get update && apt-get install -y \
     mesa-utils \
     iputils-ping \
     net-tools \
+    xvfb \
+    x11vnc \
+    novnc \
+    python3-websockify \
+    openbox \
+    x11-utils \
     && rm -rf /var/lib/apt/lists/* \
     && chsh -s "$(which zsh)" root 2>/dev/null || true
 #Пакеты для системы
