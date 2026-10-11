@@ -1,0 +1,40 @@
+rail_visual_entry:
+  ros__parameters:
+    target_bottom_offset_px: 80
+    default_distance: 1.5
+    default_speed: 0.12
+    max_drive_speed: 0.20
+    control_rate: 20.0
+    base_frame: base_footprint
+    mask_topic: /rails/mask
+    rgb_topic: /camera/color/image_raw
+    depth_topic: /camera/aligned_depth_to_color/image_raw
+    camera_info_topic: /camera/color/camera_info
+    localization_topic: /odom
+    localization_frame: odom
+    # Existing navigation command chain: cmd_sign -> /cmd_nav -> hardware mux.
+    cmd_topic: /cmd_nav_raw
+    motion_lock_path: /tmp/aida_nav_vlad_motion.lock
+    align_timeout_sec: 60.0
+    feature_max_age_sec: 0.6
+    feature_loss_timeout_sec: 2.0
+    localization_max_age_sec: 0.5
+    alignment_tolerance_px: 12.0
+    alignment_frames: 3
+    alignment_dwell_sec: 0.3
+    alignment_heading_tolerance_deg: 3.0
+    max_observed_heading_deg: 60.0
+    servo_gain: 0.8
+    heading_gain: 0.8
+    align_max_forward: 0.16
+    align_max_reverse: 0.12
+    align_max_lateral: 0.14
+    align_max_yaw: 0.35
+    align_min_linear: 0.04
+    align_min_yaw: 0.10
+    align_linear_acceleration: 0.35
+    align_yaw_acceleration: 0.8
+    jacobian_max_condition: 100.0
+    localization_jump_allowance: 0.15
+    max_localization_speed: 1.0
+    max_heading_deviation_deg: 20.0

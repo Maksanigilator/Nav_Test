@@ -15,9 +15,8 @@ IMAGE="nav2:jazzy"
 # Поэтому вторую сессию поднимать так:
 #     ROS_DOMAIN_ID=43 ./run.sh
 # Имя контейнера тогда тоже меняется, и они не конфликтуют.
-ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
-NAME="nav2${ROS_DOMAIN_ID:+_$ROS_DOMAIN_ID}"
-[ "$ROS_DOMAIN_ID" = "0" ] && NAME="nav2"
+ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-43}"
+NAME="nav2_vlad_${ROS_DOMAIN_ID}"
 # Корень проекта — КАТАЛОГ ЭТОГО СКРИПТА, а не фиксированный путь.
 #
 # Раньше здесь стояло "$HOME/Nav_Test", и это молча ломалось при клоне в
@@ -42,6 +41,17 @@ PKG="/root/ros_ws/src/maze_nav"
 # а НЕ в ~/.Xauthority, как пишут в большинстве рецептов.
 XAUTH="${XAUTHORITY:-$HOME/.Xauthority}"
 
+# Терминал Cursor и ssh не получают DISPLAY. Своего экрана нет —
+# поднимаем виртуальный :99 и noVNC, RViz открывается в браузере.
+# Пакеты Xvfb/x11vnc/novnc должны быть в образе (docker/Dockerfile.novnc).
+DISPLAY="${DISPLAY:-}"
+USE_NOVNC=0
+if [ -z "${DISPLAY}" ]; then
+    USE_NOVNC=1
+    DISPLAY=":100"
+    echo "Своего экрана нет — RViz пойдёт через noVNC, дисплей ${DISPLAY}."
+fi
+
 # Контейнер уже работает -> подключаемся к нему, а не запускаем второй
 # с тем же именем. Якоря ^$ обязательны, иначе фильтр поймает и nav2_test.
 if [ -n "$(docker ps -q -f name="^${NAME}$")" ]; then
@@ -62,6 +72,17 @@ if [ -n "$(docker ps -q -f name="^${NAME}$")" ]; then
 fi
 
 mkdir -p "${WS}/src" "${WS}/datasets" "${WS}/datasets/zed_settings" "${WS}/datasets/zed_resources"
+
+# noVNC стартует в том же контейнере, до команды пользователя, и отдаёт
+# ей уже поднятый DISPLAY. Отдельный процесс на хосте не нужен: сеть host,
+# порт 6080 слушается прямо здесь.
+if [ "${USE_NOVNC}" = 1 ]; then
+    if [ $# -eq 0 ]; then
+        set -- /opt/nav2/novnc.sh zsh
+    else
+        set -- /opt/nav2/novnc.sh "$@"
+    fi
+fi
 
 exec docker run -it --rm \
     --name "${NAME}" \
@@ -96,18 +117,28 @@ exec docker run -it --rm \
     `# а UDP по петле столько не тянет — замерено, глубина теряет кадры.` \
     `# Принудить UDP можно так:  FASTDDS_BUILTIN_TRANSPORTS=UDPv4 ./run.sh` \
     ${FASTDDS_BUILTIN_TRANSPORTS:+-e FASTDDS_BUILTIN_TRANSPORTS="$FASTDDS_BUILTIN_TRANSPORTS"} \
-    `# Гибридная графика: без этих двух переменных OpenGL уходит на встроенную` \
-    `# Intel, а не на дискретную NVIDIA. Проверяется через glxinfo -B:` \
-    `# renderer должен быть NVIDIA, а не "Mesa Intel".` \
-    -e __NV_PRIME_RENDER_OFFLOAD=1 \
-    -e __GLX_VENDOR_LIBRARY_NAME=nvidia \
+    `# На настоящем экране OpenGL уводим на NVIDIA, иначе RViz садится` \
+    `# на встроенную Intel. На виртуальном дисплее noVNC драйвер NVIDIA` \
+    `# не к чему привязать — там программный рендерер, иначе окно чёрное.` \
+    $(if [ "${USE_NOVNC}" = 1 ]; then
+         printf '%s\n' -e LIBGL_ALWAYS_SOFTWARE=1 -e GALLIUM_DRIVER=llvmpipe \
+             -e QT_QPA_PLATFORM=xcb -e QT_X11_NO_MITSHM=1 \
+             -e MESA_GL_VERSION_OVERRIDE=3.3
+     else
+         printf '%s\n' -e __NV_PRIME_RENDER_OFFLOAD=1 \
+             -e __GLX_VENDOR_LIBRARY_NAME=nvidia
+     fi) \
     `# Один путь вместо пары GAZEBO_MODEL_PATH/GAZEBO_RESOURCE_PATH:` \
     `# Gazebo Harmonic ищет и модели, и миры в GZ_SIM_RESOURCE_PATH.` \
     `# Модели TurtleBot3 — первыми: model.sdf тянет меши через` \
     `# model://turtlebot3_common. Исходники пакета — следом:` \
     `# правки в моделях и мирах видны без пересборки.` \
     -e GZ_SIM_RESOURCE_PATH="/opt/ros/jazzy/share/turtlebot3_gazebo/models:${PKG}/models:${PKG}/worlds" \
-    -v "${XAUTH}:/tmp/.docker.xauth:ro" \
+    `# Файла cookie может не быть: терминал без графической сессии.` \
+    `# Монтировать отсутствующий путь нельзя — docker создаст на его` \
+    `# месте каталог и затрёт ~/.Xauthority.` \
+    $([ -f "${XAUTH}" ] && echo "-v${XAUTH}:/tmp/.docker.xauth:ro") \
+    -v "${WS}/docker/novnc.sh:/opt/nav2/novnc.sh:ro" \
     -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
     --device /dev/dri:/dev/dri \
     `# Доступ к RealSense. Камера — обычное USB-устройство, но librealsense` \
@@ -177,7 +208,7 @@ exec docker run -it --rm \
     `# их, и SDK остался бы вообще без сети для расчёта глубины.` \
     -v "${WS}/datasets/zed_resources:/usr/local/zed/resources" \
     `# артефакты сборки и кэш Gazebo — в томах, на хост не выносятся` \
-    -v nav2_build:/root/ros_ws/build \
-    -v nav2_install:/root/ros_ws/install \
-    -v nav2_gz:/root/.gz \
+    -v nav2_vlad_build:/root/ros_ws/build \
+    -v nav2_vlad_install:/root/ros_ws/install \
+    -v nav2_vlad_gz:/root/.gz \
     "${IMAGE}" "${@:-zsh}"

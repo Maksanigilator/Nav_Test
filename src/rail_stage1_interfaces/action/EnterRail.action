@@ -1,0 +1,13 @@
+# Zero uses the node defaults: 1.5 m and 0.12 m/s.
+float64 drive_distance
+float64 drive_speed
+---
+bool success
+string message
+float64 distance_travelled
+---
+string phase
+float64 pixel_error_x
+float64 pixel_error_y
+float64 distance_travelled
+float64 drive_time_remaining
