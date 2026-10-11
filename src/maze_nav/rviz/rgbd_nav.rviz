@@ -1,0 +1,161 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Property Tree Widget:
+      Expanded: ~
+    Tree Height: 600
+  - Class: nav2_rviz_plugins/Navigation 2
+    Name: Navigation 2
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Enabled: true
+      Name: Grid
+      Cell Size: 1
+      Color: 160; 160; 164
+      Plane Cell Count: 20
+      Value: true
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Name: TF
+      Marker Scale: 0.3
+      Show Names: true
+      Show Axes: true
+      Show Arrows: false
+      Value: true
+    - Class: rviz_default_plugins/RobotModel
+      Enabled: true
+      Name: RobotModel
+      Description Topic:
+        Value: /robot_description
+        Depth: 5
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+      Value: true
+    # Главное: трёхмерная карта RTAB-Map, достраивается на глазах.
+    # Плагин из пакета rtabmap_rviz_plugins, слушает /mapData —
+    # это граф узлов с привязанными облаками, а не просто облако.
+    - Class: rtabmap_rviz_plugins/MapCloud
+      Enabled: true
+      Name: MapCloud (3D карта)
+      Topic:
+        Value: /mapData
+        Depth: 1
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+      Cloud decimation: 4
+      Cloud max depth (m): 8
+      Cloud min depth (m): 0.3
+      Cloud voxel size (m): 0.02
+      Color Transformer: RGB8
+      Size (m): 0.01
+      Style: Points
+      Value: true
+    - Class: rtabmap_rviz_plugins/MapGraph
+      Enabled: true
+      Name: MapGraph (граф и замыкания)
+      Topic:
+        Value: /mapGraph
+        Depth: 1
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+      Global loop closure: 255; 0; 0
+      Neighbor: 0; 0; 255
+      Value: true
+    # Плоская карта занятости — её же ест костмап Nav2
+    - Class: rviz_default_plugins/Map
+      Enabled: true
+      Name: Map 2D
+      Topic:
+        Value: /map
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+      Color Scheme: map
+      Alpha: 0.5
+      Value: true
+    # Облако, которым питаются костмапы
+    - Class: rviz_default_plugins/PointCloud2
+      Enabled: false
+      Name: Cloud (вход костмапа)
+      Topic:
+        Value: /cloud
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Best Effort
+      Size (m): 0.02
+      Style: Points
+      Color Transformer: AxisColor
+      Value: false
+    - Class: rviz_default_plugins/Map
+      Enabled: true
+      Name: Global Costmap
+      Topic:
+        Value: /global_costmap/costmap
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+      Color Scheme: costmap
+      Alpha: 0.3
+      Value: true
+    - Class: rviz_default_plugins/Map
+      Enabled: false
+      Name: Local Costmap
+      Topic:
+        Value: /local_costmap/costmap
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+      Color Scheme: costmap
+      Alpha: 0.4
+      Value: false
+    - Class: rviz_default_plugins/Path
+      Enabled: true
+      Name: Plan
+      Topic:
+        Value: /plan
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+      Color: 0; 255; 0
+      Line Style: Lines
+      Value: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: map
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+      Line color: 128; 128; 0
+    # Инструмент "2D Goal Pose": публикует в /goal_pose, оттуда цель
+    # забирает bt_navigator. Инструмент "2D Pose Estimate" НЕ нужен —
+    # он для AMCL, а у нас локализацию делает RTAB-Map.
+    - Class: rviz_default_plugins/SetGoal
+      Topic:
+        Value: /goal_pose
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Current View
+      Distance: 8
+      Pitch: 0.6
+      Yaw: 3.1
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+      Target Frame: base_footprint
+      Value: Orbit (rviz_default_plugins)
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 900
+  Width: 1500

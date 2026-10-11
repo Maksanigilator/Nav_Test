@@ -1,0 +1,719 @@
+<?xml version="1.0" ?>
+<!-- СГЕНЕРИРОВАНО scripts/gen_rails_world.py, руками не править. -->
+<!-- Заезд на рельсы: фанера метр на метр и трубы с П-образным концом. -->
+<sdf version="1.9">
+  <world name="rails">
+    <!-- Шаг 1 мс: у робота 48 отдельных тел роликов, и к ним
+         добавился контакт бочки ролика с крутым бортом трубы. -->
+    <physics name="1ms" type="dart">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-imu-system" name="gz::sim::systems::Imu"/>
+    <plugin filename="gz-sim-sensors-system"
+            name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.85 0.85 0.85 1</diffuse>
+      <specular>0.25 0.25 0.25 1</specular>
+      <direction>-0.4 0.2 -0.9</direction>
+    </light>
+
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry><plane><normal>0 0 1</normal><size>60 60</size></plane></geometry>
+          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual">
+          <geometry><plane><normal>0 0 1</normal><size>60 60</size></plane></geometry>
+          <material><ambient>0.32 0.32 0.34 1</ambient>
+            <diffuse>0.42 0.42 0.45 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+
+    <!-- Настил 2x2 листа по 1.00 м, верх на 120 мм.
+         Кромка, с которой рельсы уходят на опоры, лежит в x=0.
+         Листы рисуются отдельными визуалами со швом, а коллизия
+         одна на весь настил: швы физически ничего не значат. -->
+    <model name="deck">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <pose>-1.0000 0.0000 0.0600 0 0 0</pose>
+          <geometry><box><size>2.000 2.000 0.1200</size></box></geometry>
+          <surface><friction><ode><mu>0.9</mu><mu2>0.9</mu2></ode></friction></surface>
+        </collision>
+        <visual name="sheet_0_0">
+          <pose>-1.5000 -0.5000 0.0600 0 0 0.0000</pose>
+          <geometry><box><size>1.0000 1.0000 0.1200</size></box></geometry>
+          <material><diffuse>1 1 1 1</diffuse>
+            <pbr><metal><albedo_map>model://maze_nav/meshes/plywood.png</albedo_map><roughness>0.85</roughness><metalness>0</metalness></metal></pbr></material>
+        </visual>
+        <visual name="sheet_0_1">
+          <pose>-1.5000 0.5000 0.0600 0 0 1.5708</pose>
+          <geometry><box><size>1.0000 1.0000 0.1200</size></box></geometry>
+          <material><diffuse>1 1 1 1</diffuse>
+            <pbr><metal><albedo_map>model://maze_nav/meshes/plywood.png</albedo_map><roughness>0.85</roughness><metalness>0</metalness></metal></pbr></material>
+        </visual>
+        <visual name="sheet_1_0">
+          <pose>-0.5000 -0.5000 0.0600 0 0 1.5708</pose>
+          <geometry><box><size>1.0000 1.0000 0.1200</size></box></geometry>
+          <material><diffuse>1 1 1 1</diffuse>
+            <pbr><metal><albedo_map>model://maze_nav/meshes/plywood.png</albedo_map><roughness>0.85</roughness><metalness>0</metalness></metal></pbr></material>
+        </visual>
+        <visual name="sheet_1_1">
+          <pose>-0.5000 0.5000 0.0600 0 0 0.0000</pose>
+          <geometry><box><size>1.0000 1.0000 0.1200</size></box></geometry>
+          <material><diffuse>1 1 1 1</diffuse>
+            <pbr><metal><albedo_map>model://maze_nav/meshes/plywood.png</albedo_map><roughness>0.85</roughness><metalness>0</metalness></metal></pbr></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Рельсы: труба 51x2 мм,
+         колея 545 мм, П-образный конец с радиусом
+         145 мм и прямой перемычкой 255 мм.
+         Масса прямых участков 39 кг. -->
+    <model name="rails">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision_rail_l">
+          <pose>3.9803 0.2725 0.1455 0 1.570796 0</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>8.0395</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_rail_l">
+          <pose>3.9803 0.2725 0.1455 0 1.570796 0</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>8.0395</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <collision name="collision_rail_r">
+          <pose>3.9803 -0.2725 0.1455 0 1.570796 0</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>8.0395</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_rail_r">
+          <pose>3.9803 -0.2725 0.1455 0 1.570796 0</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>8.0395</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <collision name="collision_cross">
+          <pose>-0.1845 0 0.1455 1.570796 0 0</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.2550</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_cross">
+          <pose>-0.1845 0 0.1455 1.570796 0 0</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.2550</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <!-- Углы П: дуга из коротких цилиндров, тора в SDF нет.
+             Цилиндр ставится ВДОЛЬ КАСАТЕЛЬНОЙ к дуге, а не по углу
+             самой дуги — это разные вещи, они расходятся ровно на 90°,
+             и если перепутать, звенья встают поперёк и дуга
+             разваливается на ёлочку. -->
+        <collision name="collision_arc_l_0">
+          <pose>-0.1843 0.1356 0.1455 0 1.570796 1.514696</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_arc_l_0">
+          <pose>-0.1843 0.1356 0.1455 0 1.570796 1.514696</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <collision name="collision_arc_l_1">
+          <pose>-0.1825 0.1518 0.1455 0 1.570796 1.402497</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_arc_l_1">
+          <pose>-0.1825 0.1518 0.1455 0 1.570796 1.402497</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <collision name="collision_arc_l_2">
+          <pose>-0.1788 0.1676 0.1455 0 1.570796 1.290297</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_arc_l_2">
+          <pose>-0.1788 0.1676 0.1455 0 1.570796 1.290297</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <collision name="collision_arc_l_3">
+          <pose>-0.1735 0.1830 0.1455 0 1.570796 1.178097</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_arc_l_3">
+          <pose>-0.1735 0.1830 0.1455 0 1.570796 1.178097</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <collision name="collision_arc_l_4">
+          <pose>-0.1664 0.1976 0.1455 0 1.570796 1.065898</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_arc_l_4">
+          <pose>-0.1664 0.1976 0.1455 0 1.570796 1.065898</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <collision name="collision_arc_l_5">
+          <pose>-0.1578 0.2114 0.1455 0 1.570796 0.953698</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_arc_l_5">
+          <pose>-0.1578 0.2114 0.1455 0 1.570796 0.953698</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <collision name="collision_arc_l_6">
+          <pose>-0.1476 0.2241 0.1455 0 1.570796 0.841498</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_arc_l_6">
+          <pose>-0.1476 0.2241 0.1455 0 1.570796 0.841498</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <collision name="collision_arc_l_7">
+          <pose>-0.1361 0.2356 0.1455 0 1.570796 0.729298</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_arc_l_7">
+          <pose>-0.1361 0.2356 0.1455 0 1.570796 0.729298</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <collision name="collision_arc_l_8">
+          <pose>-0.1234 0.2458 0.1455 0 1.570796 0.617099</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_arc_l_8">
+          <pose>-0.1234 0.2458 0.1455 0 1.570796 0.617099</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <collision name="collision_arc_l_9">
+          <pose>-0.1096 0.2544 0.1455 0 1.570796 0.504899</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_arc_l_9">
+          <pose>-0.1096 0.2544 0.1455 0 1.570796 0.504899</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <collision name="collision_arc_l_10">
+          <pose>-0.0950 0.2615 0.1455 0 1.570796 0.392699</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_arc_l_10">
+          <pose>-0.0950 0.2615 0.1455 0 1.570796 0.392699</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <collision name="collision_arc_l_11">
+          <pose>-0.0796 0.2668 0.1455 0 1.570796 0.280499</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_arc_l_11">
+          <pose>-0.0796 0.2668 0.1455 0 1.570796 0.280499</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <collision name="collision_arc_l_12">
+          <pose>-0.0638 0.2705 0.1455 0 1.570796 0.168300</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_arc_l_12">
+          <pose>-0.0638 0.2705 0.1455 0 1.570796 0.168300</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <collision name="collision_arc_l_13">
+          <pose>-0.0476 0.2723 0.1455 0 1.570796 0.056100</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_arc_l_13">
+          <pose>-0.0476 0.2723 0.1455 0 1.570796 0.056100</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <collision name="collision_arc_r_0">
+          <pose>-0.1843 -0.1356 0.1455 0 1.570796 -1.514696</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_arc_r_0">
+          <pose>-0.1843 -0.1356 0.1455 0 1.570796 -1.514696</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <collision name="collision_arc_r_1">
+          <pose>-0.1825 -0.1518 0.1455 0 1.570796 -1.402497</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_arc_r_1">
+          <pose>-0.1825 -0.1518 0.1455 0 1.570796 -1.402497</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <collision name="collision_arc_r_2">
+          <pose>-0.1788 -0.1676 0.1455 0 1.570796 -1.290297</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_arc_r_2">
+          <pose>-0.1788 -0.1676 0.1455 0 1.570796 -1.290297</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <collision name="collision_arc_r_3">
+          <pose>-0.1735 -0.1830 0.1455 0 1.570796 -1.178097</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_arc_r_3">
+          <pose>-0.1735 -0.1830 0.1455 0 1.570796 -1.178097</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <collision name="collision_arc_r_4">
+          <pose>-0.1664 -0.1976 0.1455 0 1.570796 -1.065898</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_arc_r_4">
+          <pose>-0.1664 -0.1976 0.1455 0 1.570796 -1.065898</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <collision name="collision_arc_r_5">
+          <pose>-0.1578 -0.2114 0.1455 0 1.570796 -0.953698</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_arc_r_5">
+          <pose>-0.1578 -0.2114 0.1455 0 1.570796 -0.953698</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <collision name="collision_arc_r_6">
+          <pose>-0.1476 -0.2241 0.1455 0 1.570796 -0.841498</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_arc_r_6">
+          <pose>-0.1476 -0.2241 0.1455 0 1.570796 -0.841498</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <collision name="collision_arc_r_7">
+          <pose>-0.1361 -0.2356 0.1455 0 1.570796 -0.729298</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_arc_r_7">
+          <pose>-0.1361 -0.2356 0.1455 0 1.570796 -0.729298</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <collision name="collision_arc_r_8">
+          <pose>-0.1234 -0.2458 0.1455 0 1.570796 -0.617099</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_arc_r_8">
+          <pose>-0.1234 -0.2458 0.1455 0 1.570796 -0.617099</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <collision name="collision_arc_r_9">
+          <pose>-0.1096 -0.2544 0.1455 0 1.570796 -0.504899</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_arc_r_9">
+          <pose>-0.1096 -0.2544 0.1455 0 1.570796 -0.504899</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <collision name="collision_arc_r_10">
+          <pose>-0.0950 -0.2615 0.1455 0 1.570796 -0.392699</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_arc_r_10">
+          <pose>-0.0950 -0.2615 0.1455 0 1.570796 -0.392699</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <collision name="collision_arc_r_11">
+          <pose>-0.0796 -0.2668 0.1455 0 1.570796 -0.280499</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_arc_r_11">
+          <pose>-0.0796 -0.2668 0.1455 0 1.570796 -0.280499</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <collision name="collision_arc_r_12">
+          <pose>-0.0638 -0.2705 0.1455 0 1.570796 -0.168300</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_arc_r_12">
+          <pose>-0.0638 -0.2705 0.1455 0 1.570796 -0.168300</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+        <collision name="collision_arc_r_13">
+          <pose>-0.0476 -0.2723 0.1455 0 1.570796 -0.056100</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.6</mu><mu2>0.6</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual_arc_r_13">
+          <pose>-0.0476 -0.2723 0.1455 0 1.570796 -0.056100</pose>
+          <geometry><cylinder><radius>0.02550</radius><length>0.0187</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.33 1</ambient>
+            <diffuse>0.55 0.56 0.60 1</diffuse>
+            <specular>0.45 0.45 0.45 1</specular></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Опоры за фанерой, шаг 1.25 м. Стойки строго под
+         трубами: меканум-колёса проходят снаружи них. -->
+    <model name="support_0">
+      <static>true</static>
+      <link name="link">
+        <visual name="plate_visual">
+          <pose>0.250 0 0.0030 0 0 0</pose>
+          <geometry><box><size>0.060 0.720 0.0060</size></box></geometry>
+          <material><ambient>0.26 0.26 0.28 1</ambient>
+            <diffuse>0.46 0.47 0.50 1</diffuse></material>
+        </visual>
+        <collision name="plate_collision">
+          <pose>0.250 0 0.0030 0 0 0</pose>
+          <geometry><box><size>0.060 0.720 0.0060</size></box></geometry>
+        </collision>
+        <visual name="post_l_visual">
+          <pose>0.250 0.2725 0.0630 0 0 0</pose>
+          <geometry><box><size>0.030 0.030 0.1140</size></box></geometry>
+          <material><ambient>0.26 0.26 0.28 1</ambient>
+            <diffuse>0.46 0.47 0.50 1</diffuse></material>
+        </visual>
+        <collision name="post_l_collision">
+          <pose>0.250 0.2725 0.0630 0 0 0</pose>
+          <geometry><box><size>0.030 0.030 0.1140</size></box></geometry>
+        </collision>
+        <visual name="post_r_visual">
+          <pose>0.250 -0.2725 0.0630 0 0 0</pose>
+          <geometry><box><size>0.030 0.030 0.1140</size></box></geometry>
+          <material><ambient>0.26 0.26 0.28 1</ambient>
+            <diffuse>0.46 0.47 0.50 1</diffuse></material>
+        </visual>
+        <collision name="post_r_collision">
+          <pose>0.250 -0.2725 0.0630 0 0 0</pose>
+          <geometry><box><size>0.030 0.030 0.1140</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="support_1">
+      <static>true</static>
+      <link name="link">
+        <visual name="plate_visual">
+          <pose>1.500 0 0.0030 0 0 0</pose>
+          <geometry><box><size>0.060 0.720 0.0060</size></box></geometry>
+          <material><ambient>0.26 0.26 0.28 1</ambient>
+            <diffuse>0.46 0.47 0.50 1</diffuse></material>
+        </visual>
+        <collision name="plate_collision">
+          <pose>1.500 0 0.0030 0 0 0</pose>
+          <geometry><box><size>0.060 0.720 0.0060</size></box></geometry>
+        </collision>
+        <visual name="post_l_visual">
+          <pose>1.500 0.2725 0.0630 0 0 0</pose>
+          <geometry><box><size>0.030 0.030 0.1140</size></box></geometry>
+          <material><ambient>0.26 0.26 0.28 1</ambient>
+            <diffuse>0.46 0.47 0.50 1</diffuse></material>
+        </visual>
+        <collision name="post_l_collision">
+          <pose>1.500 0.2725 0.0630 0 0 0</pose>
+          <geometry><box><size>0.030 0.030 0.1140</size></box></geometry>
+        </collision>
+        <visual name="post_r_visual">
+          <pose>1.500 -0.2725 0.0630 0 0 0</pose>
+          <geometry><box><size>0.030 0.030 0.1140</size></box></geometry>
+          <material><ambient>0.26 0.26 0.28 1</ambient>
+            <diffuse>0.46 0.47 0.50 1</diffuse></material>
+        </visual>
+        <collision name="post_r_collision">
+          <pose>1.500 -0.2725 0.0630 0 0 0</pose>
+          <geometry><box><size>0.030 0.030 0.1140</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="support_2">
+      <static>true</static>
+      <link name="link">
+        <visual name="plate_visual">
+          <pose>2.750 0 0.0030 0 0 0</pose>
+          <geometry><box><size>0.060 0.720 0.0060</size></box></geometry>
+          <material><ambient>0.26 0.26 0.28 1</ambient>
+            <diffuse>0.46 0.47 0.50 1</diffuse></material>
+        </visual>
+        <collision name="plate_collision">
+          <pose>2.750 0 0.0030 0 0 0</pose>
+          <geometry><box><size>0.060 0.720 0.0060</size></box></geometry>
+        </collision>
+        <visual name="post_l_visual">
+          <pose>2.750 0.2725 0.0630 0 0 0</pose>
+          <geometry><box><size>0.030 0.030 0.1140</size></box></geometry>
+          <material><ambient>0.26 0.26 0.28 1</ambient>
+            <diffuse>0.46 0.47 0.50 1</diffuse></material>
+        </visual>
+        <collision name="post_l_collision">
+          <pose>2.750 0.2725 0.0630 0 0 0</pose>
+          <geometry><box><size>0.030 0.030 0.1140</size></box></geometry>
+        </collision>
+        <visual name="post_r_visual">
+          <pose>2.750 -0.2725 0.0630 0 0 0</pose>
+          <geometry><box><size>0.030 0.030 0.1140</size></box></geometry>
+          <material><ambient>0.26 0.26 0.28 1</ambient>
+            <diffuse>0.46 0.47 0.50 1</diffuse></material>
+        </visual>
+        <collision name="post_r_collision">
+          <pose>2.750 -0.2725 0.0630 0 0 0</pose>
+          <geometry><box><size>0.030 0.030 0.1140</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="support_3">
+      <static>true</static>
+      <link name="link">
+        <visual name="plate_visual">
+          <pose>4.000 0 0.0030 0 0 0</pose>
+          <geometry><box><size>0.060 0.720 0.0060</size></box></geometry>
+          <material><ambient>0.26 0.26 0.28 1</ambient>
+            <diffuse>0.46 0.47 0.50 1</diffuse></material>
+        </visual>
+        <collision name="plate_collision">
+          <pose>4.000 0 0.0030 0 0 0</pose>
+          <geometry><box><size>0.060 0.720 0.0060</size></box></geometry>
+        </collision>
+        <visual name="post_l_visual">
+          <pose>4.000 0.2725 0.0630 0 0 0</pose>
+          <geometry><box><size>0.030 0.030 0.1140</size></box></geometry>
+          <material><ambient>0.26 0.26 0.28 1</ambient>
+            <diffuse>0.46 0.47 0.50 1</diffuse></material>
+        </visual>
+        <collision name="post_l_collision">
+          <pose>4.000 0.2725 0.0630 0 0 0</pose>
+          <geometry><box><size>0.030 0.030 0.1140</size></box></geometry>
+        </collision>
+        <visual name="post_r_visual">
+          <pose>4.000 -0.2725 0.0630 0 0 0</pose>
+          <geometry><box><size>0.030 0.030 0.1140</size></box></geometry>
+          <material><ambient>0.26 0.26 0.28 1</ambient>
+            <diffuse>0.46 0.47 0.50 1</diffuse></material>
+        </visual>
+        <collision name="post_r_collision">
+          <pose>4.000 -0.2725 0.0630 0 0 0</pose>
+          <geometry><box><size>0.030 0.030 0.1140</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="support_4">
+      <static>true</static>
+      <link name="link">
+        <visual name="plate_visual">
+          <pose>5.250 0 0.0030 0 0 0</pose>
+          <geometry><box><size>0.060 0.720 0.0060</size></box></geometry>
+          <material><ambient>0.26 0.26 0.28 1</ambient>
+            <diffuse>0.46 0.47 0.50 1</diffuse></material>
+        </visual>
+        <collision name="plate_collision">
+          <pose>5.250 0 0.0030 0 0 0</pose>
+          <geometry><box><size>0.060 0.720 0.0060</size></box></geometry>
+        </collision>
+        <visual name="post_l_visual">
+          <pose>5.250 0.2725 0.0630 0 0 0</pose>
+          <geometry><box><size>0.030 0.030 0.1140</size></box></geometry>
+          <material><ambient>0.26 0.26 0.28 1</ambient>
+            <diffuse>0.46 0.47 0.50 1</diffuse></material>
+        </visual>
+        <collision name="post_l_collision">
+          <pose>5.250 0.2725 0.0630 0 0 0</pose>
+          <geometry><box><size>0.030 0.030 0.1140</size></box></geometry>
+        </collision>
+        <visual name="post_r_visual">
+          <pose>5.250 -0.2725 0.0630 0 0 0</pose>
+          <geometry><box><size>0.030 0.030 0.1140</size></box></geometry>
+          <material><ambient>0.26 0.26 0.28 1</ambient>
+            <diffuse>0.46 0.47 0.50 1</diffuse></material>
+        </visual>
+        <collision name="post_r_collision">
+          <pose>5.250 -0.2725 0.0630 0 0 0</pose>
+          <geometry><box><size>0.030 0.030 0.1140</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="support_5">
+      <static>true</static>
+      <link name="link">
+        <visual name="plate_visual">
+          <pose>6.500 0 0.0030 0 0 0</pose>
+          <geometry><box><size>0.060 0.720 0.0060</size></box></geometry>
+          <material><ambient>0.26 0.26 0.28 1</ambient>
+            <diffuse>0.46 0.47 0.50 1</diffuse></material>
+        </visual>
+        <collision name="plate_collision">
+          <pose>6.500 0 0.0030 0 0 0</pose>
+          <geometry><box><size>0.060 0.720 0.0060</size></box></geometry>
+        </collision>
+        <visual name="post_l_visual">
+          <pose>6.500 0.2725 0.0630 0 0 0</pose>
+          <geometry><box><size>0.030 0.030 0.1140</size></box></geometry>
+          <material><ambient>0.26 0.26 0.28 1</ambient>
+            <diffuse>0.46 0.47 0.50 1</diffuse></material>
+        </visual>
+        <collision name="post_l_collision">
+          <pose>6.500 0.2725 0.0630 0 0 0</pose>
+          <geometry><box><size>0.030 0.030 0.1140</size></box></geometry>
+        </collision>
+        <visual name="post_r_visual">
+          <pose>6.500 -0.2725 0.0630 0 0 0</pose>
+          <geometry><box><size>0.030 0.030 0.1140</size></box></geometry>
+          <material><ambient>0.26 0.26 0.28 1</ambient>
+            <diffuse>0.46 0.47 0.50 1</diffuse></material>
+        </visual>
+        <collision name="post_r_collision">
+          <pose>6.500 -0.2725 0.0630 0 0 0</pose>
+          <geometry><box><size>0.030 0.030 0.1140</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+    <model name="support_6">
+      <static>true</static>
+      <link name="link">
+        <visual name="plate_visual">
+          <pose>7.750 0 0.0030 0 0 0</pose>
+          <geometry><box><size>0.060 0.720 0.0060</size></box></geometry>
+          <material><ambient>0.26 0.26 0.28 1</ambient>
+            <diffuse>0.46 0.47 0.50 1</diffuse></material>
+        </visual>
+        <collision name="plate_collision">
+          <pose>7.750 0 0.0030 0 0 0</pose>
+          <geometry><box><size>0.060 0.720 0.0060</size></box></geometry>
+        </collision>
+        <visual name="post_l_visual">
+          <pose>7.750 0.2725 0.0630 0 0 0</pose>
+          <geometry><box><size>0.030 0.030 0.1140</size></box></geometry>
+          <material><ambient>0.26 0.26 0.28 1</ambient>
+            <diffuse>0.46 0.47 0.50 1</diffuse></material>
+        </visual>
+        <collision name="post_l_collision">
+          <pose>7.750 0.2725 0.0630 0 0 0</pose>
+          <geometry><box><size>0.030 0.030 0.1140</size></box></geometry>
+        </collision>
+        <visual name="post_r_visual">
+          <pose>7.750 -0.2725 0.0630 0 0 0</pose>
+          <geometry><box><size>0.030 0.030 0.1140</size></box></geometry>
+          <material><ambient>0.26 0.26 0.28 1</ambient>
+            <diffuse>0.46 0.47 0.50 1</diffuse></material>
+        </visual>
+        <collision name="post_r_collision">
+          <pose>7.750 -0.2725 0.0630 0 0 0</pose>
+          <geometry><box><size>0.030 0.030 0.1140</size></box></geometry>
+        </collision>
+      </link>
+    </model>
+  </world>
+</sdf>

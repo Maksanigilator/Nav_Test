@@ -10,6 +10,12 @@ RUN apt-get update && apt-get install -y \
     mesa-utils \
     iputils-ping \
     net-tools \
+    xvfb \
+    x11vnc \
+    novnc \
+    python3-websockify \
+    openbox \
+    x11-utils \
     && rm -rf /var/lib/apt/lists/* \
     && chsh -s "$(which zsh)" root 2>/dev/null || true
 #Пакеты для системы
@@ -34,11 +40,73 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y \
 #ros-jazzy-ros-gz = Gazebo Harmonic + мост gz<->ROS. Классического
 #gazebo_ros в Jazzy нет: Gazebo Classic 11 не собирается под Ubuntu 24.04.
 
-RUN sh -c "$(curl -fsSL https://github.com/deluan/zsh-in-docker/releases/download/v1.1.5/zsh-in-docker.sh)" -- \
-    -t bira \
-    -p git \
-    -p https://github.com/zsh-users/zsh-autosuggestions \
-    -p https://github.com/zsh-users/zsh-completions
+
+# ═══ Слой RGB-D: навигация по RealSense вместо лидара ═══
+# Отдельным слоем, чтобы правки здесь не роняли кэш всего Nav2 выше.
+# Все пакеты есть бинарниками под Jazzy — собирать из исходников нечего.
+RUN apt-get update && apt-get install -y \
+    ros-jazzy-rtabmap-ros \
+    ros-jazzy-realsense2-camera \
+    ros-jazzy-realsense2-description \
+    ros-jazzy-spatio-temporal-voxel-layer \
+    ros-jazzy-depth-image-proc \
+    ros-jazzy-robot-localization \
+    ros-jazzy-imu-filter-madgwick \
+    ros-jazzy-image-transport-plugins \
+    ros-jazzy-pointcloud-to-laserscan \
+    ros-jazzy-ros2-control \
+    ros-jazzy-ros2-controllers \
+    ros-jazzy-gz-ros2-control \
+    ros-jazzy-mecanum-drive-controller \
+    python3-pip \
+    python3-serial \
+    && rm -rf /var/lib/apt/lists/*
+#rtabmap-ros = RGB-D SLAM: даёт /map и map->odom вместо связки map_server+AMCL,
+#  плюс rtabmap_odom — визуальная одометрия вместо колёсной.
+#spatio-temporal-voxel-layer — костмап-слой под depth-камеру: разреженные воксели
+#  с затуханием и frustum-очисткой. Обычный VoxelLayer на плотном облаке жрёт CPU
+#  и не умеет забывать препятствия, а при FOV 65° у D415 забывание обязательно.
+#realsense2-camera нужен только на реальном роботе, но пусть лежит в образе:
+#  так один и тот же образ годится и для симулятора, и для железа.
+#imu-filter-madgwick + robot-localization — IMU и слияние источников одометрии.
+#image-transport-plugins — сжатие depth/RGB: сырое облако 848x480 это ~390 МБ/с,
+#  по сети такое не ходит, гоняем сжатые картинки и считаем облако у потребителя.
+#python3-serial — приём потока с Pico по USB CDC: на плате MPU6050, и узел
+#  scripts/pico_imu_node.py разбирает её кадры в sensor_msgs/Imu. Ставим из
+#  apt, а не pip: пакет системный, и так он не спорит с externally-managed.
+
+# rosbags — конвертер ROS1 bag -> ROS2 (датасеты TUM RGB-D лежат в формате ROS1).
+# evo — подсчёт ATE траектории против ground truth.
+# --break-system-packages: в Ubuntu 24.04 системный python помечен externally-managed
+# (PEP 668), а заводить venv внутри одноразового контейнера смысла нет.
+# pyrealsense2 нужен не для работы с живой камерой (её ведёт realsense2_camera),
+# а чтобы конвертировать записи .bag от librealsense. У ROS-обёртки нет режима
+# невещественного времени, из-за чего при выравнивании глубины она теряет кадры;
+# см. scripts/realsense_bag_to_ros2.py и RTABMAP.md.
+RUN pip3 install --no-cache-dir --break-system-packages rosbags evo pyrealsense2
+
+# Скачиваем В ФАЙЛ, а не в подстановку команды.
+#
+# Канонический рецепт `sh -c "$(curl -fsSL ...)"` молча проглатывает сбой
+# сети: curl с -f отдаёт пустоту, sh послушно выполняет пустой скрипт и
+# возвращает НОЛЬ, сборка идёт дальше как ни в чём не бывало. Именно так
+# один раз и вышло: образ собрался «успешно», но oh-my-zsh в нём не было
+# вовсе, и в контейнере встречал голый промпт вместо темы bira.
+# Отдельным -o файлом curl падает с ненулевым кодом, и сборка встаёт.
+#
+# Проверка после установки — не паранойя: скрипт может отработать
+# наполовину (тема скачалась, плагины нет), и это тоже надо ловить здесь,
+# а не обнаруживать потом в живом контейнере.
+RUN curl -fsSL -o /tmp/zsh-in-docker.sh \
+      https://github.com/deluan/zsh-in-docker/releases/download/v1.1.5/zsh-in-docker.sh \
+    && sh /tmp/zsh-in-docker.sh \
+        -t bira \
+        -p git \
+        -p https://github.com/zsh-users/zsh-autosuggestions \
+        -p https://github.com/zsh-users/zsh-completions \
+    && rm /tmp/zsh-in-docker.sh \
+    && test -d /root/.oh-my-zsh \
+    && grep -q 'ZSH_THEME="bira"' /root/.zshrc
 
 RUN for c in register-python-argcomplete3 register-python-argcomplete; do \
       echo "if command -v $c >/dev/null 2>&1; then eval \"\$($c ros2)\"; eval \"\$($c colcon)\"; fi" >> ~/.zshrc; \
@@ -56,6 +124,190 @@ RUN echo "source /opt/ros/jazzy/setup.zsh" >> ~/.zshrc && \
 
 
 
+# ═══ Запуск под пользователем хоста ═══
+# Контейнер запускается с --user $(id -u):$(id -g), см. run.sh.
+#
+# Причина не в безопасности, а в РАЗДЕЛЯЕМОЙ ПАМЯТИ. Fast DDS доставляет
+# сообщение, записывая в «почтовый ящик» получателя в /dev/shm, и создаёт эти
+# файлы с правами 0644 и владельцем-создателем, причём выставляет их
+# ПРИНУДИТЕЛЬНО, игнорируя umask (проверено). Пока контейнер работал под root,
+# а процесс на хосте — под обычным пользователем, запись с хоста в root-овский
+# ящик была запрещена, и данные не шли ВООБЩЕ. Симптом крайне обманчив:
+# обнаружение идёт не через разделяемую память, поэтому `ros2 node list` и
+# `ros2 topic list` показывают чужую сторону целиком, а `ros2 topic hz` молчит.
+#
+# Обойти это можно принудительным UDP (FASTDDS_BUILTIN_TRANSPORTS=UDPv4), и так
+# и было сделано сначала. Но у UDP по петле есть потолок: кадр 1.2 МБ режется
+# на ~1100 датаграмм, и при потере одного фрагмента теряется весь кадр.
+# Замерено: 36.8 МБ/с проходит идеально, а цвет плюс глубина с камеры просят
+# 136 МБ/с — и глубина начинает терять кадры.
+#
+# Совпадение UID убирает причину. Побочно исчезает вторая неприятность: файлы,
+# которые контейнер пишет в смонтированные src/ и datasets/, перестают
+# появляться с владельцем root.
+#
+# Каталоги создаём ЗАРАНЕЕ и с открытыми правами не для красоты: именованный
+# том наследует владельца и права из образа в момент первого создания. Если
+# build/install/.gz появятся root-овскими, том окажется недоступен на запись,
+# и colcon build упадёт с отказом в доступе.
+RUN mkdir -p /root/ros_ws/src /root/ros_ws/build /root/ros_ws/install /root/.gz \
+    && chmod -R a+rwX /root \
+    `# А вот каталоги дополнений zsh открывать всем НЕЛЬЗЯ. Строкой выше` \
+    `# они тоже стали доступны на запись, и zsh при каждом входе спрашивает` \
+    `# "insecure directories ... abort compinit [n]?". Ответа он не получает,` \
+    `# дополнения не поднимаются, а следом падает register-python-argcomplete` \
+    `# с "command not found: compdef" — то есть пропадает и дополнение ros2.` \
+    `# Писать в них некому: под рабочим пользователем они только читаются.` \
+    `# Владельцем оставляем root — так compaudit доволен при ЛЮБОМ UID,` \
+    `# а не только при 1000.` \
+    && chmod -R go-w /root/.oh-my-zsh
+#/root по умолчанию 700 — под другим UID туда не попасть вовсе, а там лежат
+#и рабочее пространство, и настройки zsh с oh-my-zsh, которые оболочка читает
+#при каждом входе. HOME=/root контейнеру задаёт run.sh.
+
+
+# ═══ Слой ZED: вторая камера на выбор ═══
+#
+# ZED Mini вместо RealSense включается аргументом camera:=zed в
+# robot_nav.launch.py. RealSense при этом никуда не девается — обе ветки
+# живут рядом, и переключение не требует ни пересборки, ни правок.
+#
+# ПОЧЕМУ SDK, А НЕ ПРОСТО ДРАЙВЕР. У RealSense глубину считает сама
+# камера и отдаёт готовой по UVC. ZED отдаёт только пару кадров, а
+# глубину считает хост на видеокарте — поэтому нужен и CUDA, и
+# проприетарный SDK Stereolabs, который её и считает. Без видеокарты ZED
+# не работает вовсе; run.sh отдаёт её контейнеру через --gpus all.
+#
+# ВЕРСИЯ 5.5, И ОНА ВЫБРАНА НЕ ПРОИЗВОЛЬНО. Сперва взял 4.2 — вдвое
+# меньше и давно обкатана, — но оказалось, что обёртки ROS под неё не
+# существует: у zed-ros2-wrapper остались только master и теги 5.x.
+# Номер 5.5 совпадает с тегом обёртки v5.5.0, то есть это согласованная
+# пара от самого Stereolabs.
+#
+# Опасение, что в пятой версии свернут поддержку старых камер, не
+# подтвердилось: в примечаниях к выпуску сняты с поддержки только старые
+# режимы глубины, а ZED Mini остаётся в линейке.
+#
+# Установщик ставит CUDA сам, если её нет. skip_tools и skip_drivers
+# выбрасывают графические утилиты и драйвер видеокарты: первые в
+# контейнере без надобности, второй приходит с хоста.
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      zstd udev libgl1 libusb-1.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+# Скачивание и установка РАЗНЫМИ слоями: установщик весит 1.35 ГБ, и
+# если держать их вместе, любая правка ключей тянет его заново.
+RUN curl -sL -o /tmp/zed.run \
+      https://download.stereolabs.com/zedsdk/5.5/cu12/ubuntu24 \
+    && chmod +x /tmp/zed.run
+
+# КЛЮЧИ ЗДЕСЬ РАЗНОСТОРОННИЕ, и порядок важен. Это самораспаковывающийся
+# архив makeself: ДО двойного тире идут ключи самого makeself, ПОСЛЕ —
+# ключи вложенного установщика ZED.
+#
+# --accept снимает запрос лицензии. Без него установщик печатает
+# «Please type y to accept, n otherwise:» и ждёт ответа с клавиатуры,
+# которой при сборке образа нет. Замерено: висел так 21 минуту, не
+# записав на диск ни байта и не заняв процессор — со стороны неотличимо
+# от медленной установки.
+#
+# После тире: silent — без вопросов, skip_tools — без графических
+# утилит (в контейнере не нужны), skip_drivers — без драйвера
+# видеокарты, он приходит с хоста через --gpus all.
+RUN /tmp/zed.run --accept --quiet -- silent skip_tools skip_drivers \
+    && rm -f /tmp/zed.run
+
+# Обёртка ROS живёт в ОТДЕЛЬНОМ рабочем пространстве /opt/zed_ws, а не в
+# /root/ros_ws/src. Причина простая: src примонтирован с хоста, и всё,
+# что положить туда при сборке образа, монтированием перекроется и
+# исчезнет. Заодно чужой код не мешается в нашем репозитории.
+# ДВА РЕПОЗИТОРИЯ, А НЕ ОДИН. Сообщения zed_msgs лежат отдельно, в
+# zed-ros2-interfaces, и подмодулем к обёртке НЕ подключены: у неё нет
+# даже файла .gitmodules, так что --recursive ничего не приносит.
+# Проверено клонированием: в обёртке ровно четыре пакета, zed_msgs среди
+# них нет, и сборка падала на «Could not find zed_msgs».
+#
+# У репозитория сообщений теги остановились на humble-v4.1.4, под пятую
+# версию отдельного тега нет — берём master, он и есть текущий.
+#
+# ЗАВИСИМОСТИ СТАВИТ rosdep, а не список руками. Их у обёртки два
+# десятка — nmea_msgs, robot_localization, geographic_msgs,
+# diagnostic_updater, theora_image_transport и так далее, — и
+# перечислять их вручную значит возвращаться сюда после каждой новой
+# ошибки. rosdep читает их из package.xml сам.
+RUN mkdir -p /opt/zed_ws/src && cd /opt/zed_ws/src \
+    && git clone --depth 1 -b v5.5.0 \
+       https://github.com/stereolabs/zed-ros2-wrapper.git \
+    && git clone --depth 1 \
+       https://github.com/stereolabs/zed-ros2-interfaces.git \
+    && cd /opt/zed_ws \
+    && apt-get update \
+    `# rosdep ставим ЗДЕСЬ, а не в раннем слое с zstd и udev. Дописав` \
+    `# туда, мы бы обесценили следующие слои, и пересборка заново качала` \
+    `# бы установщик SDK и всю CUDA — восемнадцать минут впустую.` \
+    && apt-get install -y --no-install-recommends python3-rosdep \
+    && (rosdep init 2>/dev/null || true) \
+    && rosdep update --rosdistro jazzy \
+    && rosdep install --from-paths src --ignore-src -r -y --rosdistro jazzy \
+    && . /opt/ros/jazzy/setup.sh \
+    `# zed_debug ПРОПУСКАЕМ, и это не лень, а невозможность.` \
+    `#` \
+    `# Он собирает ИСПОЛНЯЕМЫЙ файл, а тот требует libcuda.so.1,` \
+    `# libnvcuvid.so.1 и libnvidia-encode.so.1 — библиотеки ДРАЙВЕРА` \
+    `# видеокарты. При сборке образа видеокарты нет, и взяться им` \
+    `# неоткуда: их подкладывает прослойка NVIDIA в момент запуска, по` \
+    `# флагу --gpus all в run.sh. Отсюда ворох undefined reference на` \
+    `# cuInit, cuMemAlloc_v2 и прочие вызовы драйвера.` \
+    `#` \
+    `# Остальные четыре пакета собираются как БИБЛИОТЕКИ, у них` \
+    `# неразрешённые символы откладываются до загрузки — и на запущенном` \
+    `# контейнере разрешаются, потому что там драйвер уже есть.` \
+    `#` \
+    `# Сам zed_debug это отладочная утилита, для работы камеры не нужна.` \
+    `# БЕЗ --symlink-install, и это важно. При нём colcon не копирует` \
+    `# файлы в install, а ССЫЛАЕТСЯ на них в build и src. Мы build тут же` \
+    `# удаляем, чтобы не раздувать образ, — и ссылки осыпаются: install` \
+    `# остаётся с одними верхнеуровневыми скриптами, а каталогов пакетов` \
+    `# в нём нет. Снаружи выглядит как успешная сборка, но ros2 pkg list` \
+    `# пакетов не видит, и запуск падает на not found.` \
+    `#` \
+    `# Для своего кода symlink-установка удобна — правки подхватываются` \
+    `# без пересборки, — но здесь чужой код, который мы не трогаем.` \
+    && colcon build --packages-skip zed_debug \
+       --cmake-args -DCMAKE_BUILD_TYPE=Release \
+    && rm -rf /opt/zed_ws/build /opt/zed_ws/log /var/lib/apt/lists/*
+
+# ═══ Права на SDK для непривилегированного пользователя ═══
+#
+# Установщик ZED кладёт всё как root:zed с правами 0770, и контейнер,
+# который run.sh запускает под UID хозяина (ради разделяемой памяти Fast
+# DDS), до библиотеки не дотягивается вовсе. Проверено: под uid 1000
+# каталог /usr/local/zed/lib не читается, и даже ls по нему отказывает.
+#
+# Снаружи это выглядело бы как «камера не найдена» — самый обманчивый
+# вид отказа, потому что искать начинаешь в USB и в драйвере, а дело в
+# правах на файл.
+#
+# Открываем только ЧТЕНИЕ и ВЫПОЛНЕНИЕ (a+rX), запись оставляем root.
+RUN chmod -R a+rX /usr/local/zed /usr/local/cuda-12.9 2>/dev/null || true
+
+# Каталог заводских калибровок — НА ЗАПИСЬ, в отличие от остального SDK.
+# При первом подключении камеры SDK скачивает в него файл под её
+# серийный номер (SN<номер>.conf). Без права записи открытие падает на
+# «CALIBRATION FILE NOT AVAILABLE», хотя камера уже открылась и
+# отрапортовала прошивку с разрешением.
+#
+# Сам каталог обычно перекрыт монтированием из run.sh, чтобы калибровка
+# пережила пересборку образа; права здесь нужны на случай запуска без
+# него.
+RUN mkdir -p /usr/local/zed/settings && chmod -R a+rwX /usr/local/zed/settings
+
+# Каталог кеша под оболочку. oh-my-zsh создаёт его при каждом входе, а
+# под чужим UID не может — и каждая команда начиналась со строки
+# «mkdir: cannot create directory '/root/.cache': Permission denied».
+# Безвредно, но мешает читать вывод.
+RUN mkdir -p /root/.cache /root/.config && chmod -R a+rwX /root/.cache /root/.config
+
 # ═══ Переменные времени выполнения ═══
 # Fast DDS — дефолт Jazzy и то, на чём говорит реальный робот.
 # Cyclone здесь стоять НЕ должен: с ним контейнер видит имена нод робота,
@@ -63,7 +315,7 @@ RUN echo "source /opt/ros/jazzy/setup.zsh" >> ~/.zshrc && \
 ENV RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 ENV TURTLEBOT3_MODEL=waffle
 ENV QT_QPA_PLATFORM=xcb
-ENV ROS_DOMAIN_ID=42
+ENV ROS_DOMAIN_ID=0
 #ENV QT_QPA_PLATFORM=xcb настраивает x11
 #GAZEBO_MODEL_DATABASE_URI больше не нужен: у gz своя Fuel, а мир лабиринта
 #её не трогает — земля и солнце описаны прямо в .world

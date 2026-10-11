@@ -1,0 +1,413 @@
+# Nav2 для навигации по RGB-D камере без лидара и без колёсной одометрии.
+#
+# Отличия от maze_params.yaml, и почему:
+#
+# 1. Секции amcl НЕТ вообще. Локализацию (map->odom) и карту (/map) даёт
+#    RTAB-Map, map_server тоже не запускается.
+# 2. Костмапы получают PointCloud2 через spatio_temporal_voxel_layer вместо
+#    LaserScan. Имя класса — spatio_temporal_voxel_layer/SpatioTemporalVoxelLayer,
+#    НЕ через nav2_costmap_2d:: (проверено в образе; неверное имя роняет
+#    весь bringup в FATAL).
+# 3. collision_monitor слушает облако, а не скан.
+# 4. Контроллер MPPI вместо DWB: на этапе 4 робот станет меканумным,
+#    и у MPPI для этого есть motion_model "Omni". Пока стоит "DiffDrive"
+#    под TurtleBot3.
+
+bt_navigator:
+  ros__parameters:
+    use_sim_time: True
+    global_frame: map
+    robot_base_frame: base_link
+    odom_topic: /odom
+    bt_loop_duration: 10
+    default_server_timeout: 20
+    wait_for_service_timeout: 1000
+    # Своё дерево без BackUp: камера не видит назад, отъезд вслепую опасен.
+    # Путь подставляется в launch через RewrittenYaml, здесь только имя файла
+    # не годится — bt_navigator ждёт абсолютный путь.
+    default_nav_to_pose_bt_xml: ""
+    default_nav_through_poses_bt_xml: ""
+    navigators: ["navigate_to_pose", "navigate_through_poses"]
+    navigate_to_pose:
+      plugin: "nav2_bt_navigator::NavigateToPoseNavigator"
+    navigate_through_poses:
+      plugin: "nav2_bt_navigator::NavigateThroughPosesNavigator"
+
+controller_server:
+  ros__parameters:
+    use_sim_time: True
+    enable_stamped_cmd_vel: true
+    # 10 Гц, а не штатные 20. Причина: костмап питается облаком с камеры
+    # (~9 Гц), обновляется на 5 Гц и при 20 Гц контроллер не дожидается
+    # свежих данных — прогон падал с "Costmap timed out waiting for update"
+    # и CONTROLLER_TIMED_OUT (код 107). При скорости 0.26 м/с 10 Гц с запасом.
+    controller_frequency: 10.0
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.5
+    min_theta_velocity_threshold: 0.001
+    failure_tolerance: 0.3
+    progress_checker_plugin: "progress_checker"
+    goal_checker_plugins: ["general_goal_checker"]
+    controller_plugins: ["FollowPath"]
+
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.5
+      movement_time_allowance: 10.0
+    general_goal_checker:
+      stateful: True
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.25
+      yaw_goal_tolerance: 0.25
+
+    FollowPath:
+      plugin: "nav2_mppi_controller::MPPIController"
+      time_steps: 40
+      # model_dt обязан совпадать с периодом контроллера, иначе MPPI
+      # предсказывает не тот горизонт. 10 Гц -> 0.1 с. Горизонт 40*0.1 = 4 с.
+      model_dt: 0.1
+      # Батч урезан вдвое: 2000 траекторий на загруженной машине
+      # (рендер Gazebo + RTAB-Map + облако) не укладываются в период.
+      batch_size: 1000
+      vx_std: 0.2
+      vy_std: 0.2
+      wz_std: 0.4
+      vx_max: 0.26
+      vx_min: -0.26
+      vy_max: 0.0
+      wz_max: 1.0
+      ax_max: 2.5
+      ax_min: -2.5
+      az_max: 3.2
+      iteration_count: 1
+      prune_distance: 1.7
+      transform_tolerance: 0.1
+      temperature: 0.3
+      gamma: 0.015
+      # На этапе 4 здесь будет "Omni": меканум умеет ехать боком.
+      motion_model: "DiffDrive"
+      visualize: false
+      TrajectoryVisualizer:
+        trajectory_step: 5
+        time_step: 3
+      AckermannConstraints:
+        min_turning_r: 0.2
+      critics: ["ConstraintCritic", "CostCritic", "GoalCritic",
+                "GoalAngleCritic", "PathAlignCritic", "PathFollowCritic",
+                "PathAngleCritic", "PreferForwardCritic"]
+      ConstraintCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 4.0
+      GoalCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        threshold_to_consider: 1.4
+      GoalAngleCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 3.0
+        threshold_to_consider: 0.5
+      # Разворот на месте для камеры опаснее, чем для лидара: назад и вбок
+      # робот не видит. Поэтому движение вперёд поощряется сильнее обычного.
+      PreferForwardCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        threshold_to_consider: 0.5
+      CostCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 3.81
+        critical_cost: 300.0
+        # false: робот описан через robot_radius, полигона footprint нет,
+        # а с true контроллер падает на "no robot footprint provided".
+        consider_footprint: false
+        collision_cost: 1000000.0
+        near_goal_distance: 1.0
+      PathAlignCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 14.0
+        max_path_occupancy_ratio: 0.05
+        trajectory_point_step: 4
+        threshold_to_consider: 0.5
+        offset_from_furthest: 20
+        use_path_orientations: false
+      PathFollowCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        offset_from_furthest: 5
+        threshold_to_consider: 1.4
+      PathAngleCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 2.0
+        offset_from_furthest: 4
+        threshold_to_consider: 0.5
+        max_angle_to_furthest: 1.0
+        mode: 0
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      update_frequency: 5.0
+      publish_frequency: 2.0
+      # Запас больше штатного: данные приходят с камеры неравномерно.
+      transform_tolerance: 0.5
+      global_frame: odom
+      robot_base_frame: base_link
+      use_sim_time: True
+      rolling_window: true
+      width: 3
+      height: 3
+      resolution: 0.05
+      robot_radius: 0.22
+      plugins: ["stvl_layer", "inflation_layer"]
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.25
+      stvl_layer:
+        plugin: "spatio_temporal_voxel_layer/SpatioTemporalVoxelLayer"
+        enabled: true
+        # Затухание вокселей — не роскошь, а необходимость: камера смотрит
+        # вперёд на 69°, и без памяти препятствие сбоку исчезает ровно тогда,
+        # когда робот начинает поворот. У лидара такой проблемы нет.
+        voxel_decay: 15.0
+        decay_model: 0
+        voxel_size: 0.05
+        track_unknown_space: true
+        mark_threshold: 0
+        update_footprint_enabled: true
+        combination_method: 1
+        origin_z: 0.0
+        publish_voxel_map: true
+        transform_tolerance: 0.2
+        mapping_mode: false
+        observation_sources: rgbd_mark rgbd_clear
+        rgbd_mark:
+          data_type: PointCloud2
+          topic: /cloud
+          marking: true
+          clearing: false
+          obstacle_range: 3.0
+          # Отсечка пола. Без неё костмап мгновенно зарастает: камера
+          # смотрит вниз и видит пол как препятствие.
+          min_obstacle_height: 0.08
+          max_obstacle_height: 1.5
+          # 1.0 с, а не 0.3. Это ДОПУСК на устаревание буфера, а не требование
+          # к темпу. Облако с камеры приходит неравномерно — замерено 0.32..0.50 с
+          # между сообщениями. При допуске 0.3 буфер объявлялся устаревшим,
+          # костмап помечался "не текущий", и контроллер отваливался
+          # по CONTROLLER_TIMED_OUT, хотя данные шли.
+          expected_update_rate: 1.0
+          observation_persistence: 0.0
+          inf_is_valid: false
+          voxel_filter: true
+          clear_after_reading: true
+        rgbd_clear:
+          data_type: PointCloud2
+          topic: /cloud
+          marking: false
+          clearing: true
+          max_z: 8.0
+          min_z: 0.1
+          # Модель усечённой пирамиды depth-камеры. Углы — под D435,
+          # цветной тракт: 69.4° x 42.8°, см. заметку в README.
+          vertical_fov_angle: 0.747
+          horizontal_fov_angle: 1.2113
+          decay_acceleration: 5.0
+          model_type: 0
+      always_send_full_costmap: True
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      update_frequency: 1.0
+      publish_frequency: 1.0
+      global_frame: map
+      robot_base_frame: base_link
+      use_sim_time: True
+      robot_radius: 0.22
+      resolution: 0.05
+      track_unknown_space: true
+      plugins: ["static_layer", "stvl_layer", "inflation_layer"]
+      # Карту в static_layer кладёт RTAB-Map, а не map_server.
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: True
+      stvl_layer:
+        plugin: "spatio_temporal_voxel_layer/SpatioTemporalVoxelLayer"
+        enabled: true
+        voxel_decay: 30.0
+        decay_model: 0
+        voxel_size: 0.05
+        track_unknown_space: true
+        mark_threshold: 0
+        update_footprint_enabled: true
+        combination_method: 1
+        origin_z: 0.0
+        publish_voxel_map: true
+        transform_tolerance: 0.2
+        mapping_mode: false
+        observation_sources: rgbd_mark rgbd_clear
+        rgbd_mark:
+          data_type: PointCloud2
+          topic: /cloud
+          marking: true
+          clearing: false
+          obstacle_range: 4.0
+          min_obstacle_height: 0.08
+          max_obstacle_height: 1.5
+          # 1.0 с, а не 0.3. Это ДОПУСК на устаревание буфера, а не требование
+          # к темпу. Облако с камеры приходит неравномерно — замерено 0.32..0.50 с
+          # между сообщениями. При допуске 0.3 буфер объявлялся устаревшим,
+          # костмап помечался "не текущий", и контроллер отваливался
+          # по CONTROLLER_TIMED_OUT, хотя данные шли.
+          expected_update_rate: 1.0
+          observation_persistence: 0.0
+          inf_is_valid: false
+          voxel_filter: true
+          clear_after_reading: true
+        rgbd_clear:
+          data_type: PointCloud2
+          topic: /cloud
+          marking: false
+          clearing: true
+          max_z: 8.0
+          min_z: 0.1
+          vertical_fov_angle: 0.747
+          horizontal_fov_angle: 1.2113
+          decay_acceleration: 5.0
+          model_type: 0
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.25
+      always_send_full_costmap: True
+
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 20.0
+    use_sim_time: True
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_navfn_planner::NavfnPlanner"
+      tolerance: 0.5
+      use_astar: false
+      allow_unknown: true
+
+smoother_server:
+  ros__parameters:
+    use_sim_time: True
+    smoother_plugins: ["simple_smoother"]
+    simple_smoother:
+      plugin: "nav2_smoother::SimpleSmoother"
+      tolerance: 1.0e-10
+      max_its: 1000
+      do_refinement: True
+
+behavior_server:
+  ros__parameters:
+    use_sim_time: True
+    enable_stamped_cmd_vel: true
+    local_costmap_topic: local_costmap/costmap_raw
+    global_costmap_topic: global_costmap/costmap_raw
+    local_footprint_topic: local_costmap/published_footprint
+    global_footprint_topic: global_costmap/published_footprint
+    cycle_frequency: 10.0
+    # backup убран намеренно: робот с камерой НЕ ВИДИТ назад совсем.
+    # С лидаром пятиться было безопасно, здесь это движение вслепую.
+    behavior_plugins: ["spin", "drive_on_heading", "wait"]
+    spin:
+      plugin: "nav2_behaviors::Spin"
+    drive_on_heading:
+      plugin: "nav2_behaviors::DriveOnHeading"
+    wait:
+      plugin: "nav2_behaviors::Wait"
+    local_frame: odom
+    global_frame: map
+    robot_base_frame: base_link
+    transform_tolerance: 0.1
+    simulate_ahead_time: 2.0
+    # Вращение медленное: быстрый разворот смазывает кадры, а на смазанных
+    # кадрах визуальная одометрия срывается — это измерено на реальной записи.
+    max_rotational_vel: 0.6
+    min_rotational_vel: 0.2
+    rotational_acc_lim: 1.5
+
+waypoint_follower:
+  ros__parameters:
+    use_sim_time: True
+    loop_rate: 20
+    stop_on_failure: false
+    waypoint_task_executor_plugin: "wait_at_waypoint"
+    wait_at_waypoint:
+      plugin: "nav2_waypoint_follower::WaitAtWaypoint"
+      enabled: True
+      waypoint_pause_duration: 200
+
+velocity_smoother:
+  ros__parameters:
+    use_sim_time: True
+    enable_stamped_cmd_vel: true
+    smoothing_frequency: 20.0
+    scale_velocities: False
+    feedback: "OPEN_LOOP"
+    max_velocity: [0.26, 0.0, 1.0]
+    min_velocity: [-0.26, 0.0, -1.0]
+    max_accel: [2.5, 0.0, 3.2]
+    max_decel: [-2.5, 0.0, -3.2]
+    odom_topic: "odom"
+    odom_duration: 0.1
+    deadband_velocity: [0.0, 0.0, 0.0]
+    velocity_timeout: 1.0
+    cmd_vel_out_topic: "cmd_vel_smoothed"
+
+collision_monitor:
+  ros__parameters:
+    use_sim_time: True
+    base_frame_id: "base_footprint"
+    odom_frame_id: "odom"
+    cmd_vel_in_topic: "cmd_vel_smoothed"
+    cmd_vel_out_topic: "cmd_vel"
+    enable_stamped_cmd_vel: true
+    state_topic: "collision_monitor_state"
+    transform_tolerance: 0.2
+    source_timeout: 1.0
+    base_shift_correction: True
+    stop_pub_timeout: 2.0
+    polygons: ["FootprintApproach"]
+    FootprintApproach:
+      type: "polygon"
+      action_type: "approach"
+      footprint_topic: "/local_costmap/published_footprint"
+      time_before_collision: 1.2
+      simulation_time_step: 0.1
+      min_points: 6
+      visualize: False
+      enabled: True
+    # Источник — облако, а не скан: лидара нет.
+    observation_sources: ["pointcloud"]
+    pointcloud:
+      type: "pointcloud"
+      topic: /cloud
+      min_height: 0.1
+      max_height: 1.5
+      enabled: True
+
+docking_server:
+  ros__parameters:
+    use_sim_time: True
+    enable_stamped_cmd_vel: true
+    controller_frequency: 10.0
+    base_frame: "base_link"
+    fixed_frame: "odom"
+    dock_plugins: ['simple_charging_dock']
+    simple_charging_dock:
+      plugin: 'opennav_docking::SimpleChargingDock'
+      use_battery_status: false
+      use_stall_detection: false

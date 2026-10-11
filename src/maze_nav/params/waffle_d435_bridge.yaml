@@ -1,0 +1,84 @@
+# Мост gz <-> ROS для TurtleBot3 с камерой D435 и БЕЗ колёсной одометрии.
+#
+# Отличие от штатного turtlebot3_waffle_bridge.yaml принципиальное: там мостятся
+# "odom" и "/tf", причём /tf от плагина gz::sim::systems::DiffDrive — это и есть
+# трансформ odom->base_footprint. Мы от колёсной одометрии отказываемся, поэтому
+# обеих записей здесь НЕТ: единственным поставщиком odom->base_footprint должна
+# быть визуальная одометрия rtabmap_odom. Если вернуть их обратно, два источника
+# начнут спорить за один трансформ, и дерево TF сломается молча.
+
+- ros_topic_name: "clock"
+  gz_topic_name: "clock"
+  ros_type_name: "rosgraph_msgs/msg/Clock"
+  gz_type_name: "gz.msgs.Clock"
+  direction: GZ_TO_ROS
+
+- ros_topic_name: "joint_states"
+  gz_topic_name: "joint_states"
+  ros_type_name: "sensor_msgs/msg/JointState"
+  gz_type_name: "gz.msgs.Model"
+  direction: GZ_TO_ROS
+
+# Команды в симулятор. TwistStamped, а не Twist — так устроен мост TB3 в Jazzy,
+# и вся цепочка Nav2 настроена на stamped-вид (enable_stamped_cmd_vel).
+- ros_topic_name: "cmd_vel"
+  gz_topic_name: "cmd_vel"
+  ros_type_name: "geometry_msgs/msg/TwistStamped"
+  gz_type_name: "gz.msgs.Twist"
+  direction: ROS_TO_GZ
+
+# IMU. У реального D435 своего IMU нет (он есть у D435i), так что на роботе
+# это будет отдельная микросхема. В симуляторе берём tb3_imu из модели:
+# шум гироскопа 2e-4 рад/с и акселерометра 1.7e-2 м/с^2 — это уровень
+# приличного MEMS класса ICM-42688 / BMI088.
+- ros_topic_name: "imu"
+  gz_topic_name: "imu"
+  ros_type_name: "sensor_msgs/msg/Imu"
+  gz_type_name: "gz.msgs.IMU"
+  direction: GZ_TO_ROS
+
+# ═══ Камера D435 ═══
+# Сенсор rgbd_camera с <topic>camera</topic> публикует в gz четыре темы.
+# Цвет и глубина рождаются из одной виртуальной оптики, поэтому совмещены
+# по построению — в отличие от реальной камеры, где выравнивание стоит CPU.
+- ros_topic_name: "camera/image_raw"
+  gz_topic_name: "camera/image"
+  ros_type_name: "sensor_msgs/msg/Image"
+  gz_type_name: "gz.msgs.Image"
+  direction: GZ_TO_ROS
+
+- ros_topic_name: "camera/depth/image_raw"
+  gz_topic_name: "camera/depth_image"
+  ros_type_name: "sensor_msgs/msg/Image"
+  gz_type_name: "gz.msgs.Image"
+  direction: GZ_TO_ROS
+
+# ВНИМАНИЕ: camera/points СОЗНАТЕЛЬНО не мостится.
+# Замерено: это облако 848x480 весит 9.77 МБ на сообщение и даёт 142 МБ/с —
+# в четырнадцать раз больше цветного потока (10 МБ/с). Мост на этом
+# захлёбывается и роняет частоту ВСЕХ топиков: цвет падал до 4 Гц,
+# глубина до 5 Гц при честных 30 у camera_info, который рендера не требует.
+# Из-за такого разброса rgbd_odometry не могла собрать синхронную тройку
+# цвет+глубина+интринсики и молчала совсем.
+# Облако для костмапа считаем на стороне ROS узлом point_cloud_xyz
+# с прореживанием и отсечкой по дальности — это на порядок дешевле.
+
+- ros_topic_name: "camera/camera_info"
+  gz_topic_name: "camera/camera_info"
+  ros_type_name: "sensor_msgs/msg/CameraInfo"
+  gz_type_name: "gz.msgs.CameraInfo"
+  direction: GZ_TO_ROS
+
+# ═══ Ground truth ═══
+# Истинные позы моделей от самого симулятора. Нужны, чтобы посчитать ошибку
+# траектории (ATE) визуальной одометрии, а не оценивать её на глаз в RViz.
+# Публикуется в ОТДЕЛЬНУЮ тему, а не в /tf: попади оно в /tf, робот получил бы
+# второго родителя и дерево сломалось бы. Имя мира "default" — так назван мир
+# внутри turtlebot3_house.world.
+# dynamic_pose, а не pose: нужны только движущиеся модели, статика не меняется
+# и заняла бы канал впустую.
+- ros_topic_name: "ground_truth/pose"
+  gz_topic_name: "/world/default/dynamic_pose/info"
+  ros_type_name: "tf2_msgs/msg/TFMessage"
+  gz_type_name: "gz.msgs.Pose_V"
+  direction: GZ_TO_ROS

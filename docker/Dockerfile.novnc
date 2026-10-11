@@ -1,0 +1,11 @@
+# Тонкий слой поверх уже собранного nav2:jazzy: виртуальный экран для RViz.
+# Полный Dockerfile при следующей пересборке ставит те же пакеты сам.
+FROM nav2:jazzy
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        xvfb \
+        x11vnc \
+        novnc \
+        python3-websockify \
+        openbox \
+        x11-utils \
+    && rm -rf /var/lib/apt/lists/*
