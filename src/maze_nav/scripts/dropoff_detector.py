@@ -1074,6 +1074,14 @@ class DropoffDetector(Node):
                     # полусекунды, зато нет полной пересборки на каждую
                     # маску.
                     return
+            # Слой уже собран из узлов и лежит в map. Пока робот стоит,
+            # RTAB-Map новых узлов не заводит, и ближайший по времени
+            # оказывается старше rail_node_tol. Класть такое наблюдение
+            # запасным путём нельзя: клетки odom легли бы в тот же словарь
+            # поверх клеток map, и слой раздвоился бы на расхождение map и
+            # odom. Пропускаем — узлы и так видели то же самое.
+            if self.obs and self.rebuilt:
+                return
 
         # ЗАПАСНОЙ ПУТЬ: граф недоступен или узел не нашёлся — копим
         # как раньше, прямо в мировые клетки. Слой при этом не
@@ -1136,7 +1144,14 @@ class DropoffDetector(Node):
         наблюдение с узлом — в mapGraph их нет.
         """
         for n in m.nodes:
-            self.node_stamp[int(n.id)] = float(n.stamp)
+            i, s = int(n.id), float(n.stamp)
+            # Тот же номер с другой меткой — RTAB-Map сброшен и считает
+            # узлы заново. Старые наблюдения привязаны к прежним узлам и
+            # на новые с теми же номерами легли бы мимо, поэтому слой
+            # начинаем с нуля.
+            if i in self.node_stamp and abs(self.node_stamp[i] - s) > 1.0:
+                self.reset_rails('RTAB-Map сброшен, слой рельсов очищен')
+            self.node_stamp[i] = s
         # Граф лежит здесь же — отдельного сообщения ждать не надо.
         self.on_graph(m.graph)
 
@@ -1167,6 +1182,16 @@ class DropoffDetector(Node):
             moved = True
         if moved:
             self.graph_dirty = True
+
+    def reset_rails(self, why):
+        self.get_logger().warn(why)
+        self.rail_vox = {}
+        self.obs = {}
+        self.node_pose = {}
+        self.node_stamp = {}
+        self.graph_dirty = False
+        self.bound = False
+        self.rebuilt = False
 
     def node_for(self, stamp_s):
         """Узел, ближайший по времени к наблюдению, или None."""

@@ -129,6 +129,10 @@ class RailServer(Node):
         p('align_lat_tol', 0.02)        # допуск по поперечному смещению, м
         p('align_yaw_tol', 0.02)        # допуск по курсу на выверке, рад
         p('align_gain', 0.8)
+        p('align_max_vy', 0.08)         # м/с боком на выверке
+        p('align_max_wz', 0.25)         # рад/с на выверке
+        p('track_max_vy', 0.06)         # подруливание на откате и съезде
+        p('track_max_wz', 0.20)
         p('align_timeout', 25.0)
         p('drive_speed', 0.12)          # м/с на заезде
         # Сколько проехать ПОСЛЕ точки старта. Отсчёт идёт от неё, а не от
@@ -645,6 +649,8 @@ class RailServer(Node):
         lat_tol = float(self.get_parameter('align_lat_tol').value)
         yaw_tol = float(self.get_parameter('align_yaw_tol').value)
         k = float(self.get_parameter('align_gain').value)
+        mvy = float(self.get_parameter('align_max_vy').value)
+        mwz = float(self.get_parameter('align_max_wz').value)
         t0 = self.now()
         while (self.now() - t0 < float(self.get_parameter('align_timeout').value)
                and not self.cancelled()):
@@ -667,8 +673,8 @@ class RailServer(Node):
                 return True
             # Смещаемся боком, а не разворотами: у меканума это прямее, и
             # курс при этом не портится.
-            self.go(vy=max(-0.08, min(0.08, -k * lat)),
-                    wz=max(-0.25, min(0.25, k * dyaw)))
+            self.go(vy=max(-mvy, min(mvy, -k * lat)),
+                    wz=max(-mwz, min(mwz, k * dyaw)))
             self.spin(0.05)
         self.stop()
         self.say('ВЫВЕРКА', 'не сошлось за отведённое время')
@@ -807,6 +813,8 @@ class RailServer(Node):
         """
         v = float(self.get_parameter('drive_speed').value)
         k = float(self.get_parameter('align_gain').value)
+        mvy = float(self.get_parameter('track_max_vy').value)
+        mwz = float(self.get_parameter('track_max_wz').value)
         limit = gone + float(self.get_parameter('retreat_margin').value)
         start = np.array(self.odom[:2])
         self.say('ОТКАТ', f'отходим назад, не дальше {limit:.2f} м')
@@ -821,8 +829,8 @@ class RailServer(Node):
                 self.say('ОТКАТ', f'вернулись в точку старта, назад {back:.2f} м')
                 break
             e = self.rail_error()
-            vy = max(-0.06, min(0.06, -k * e[0])) if e else 0.0
-            wz = max(-0.20, min(0.20, k * e[1])) if e else 0.0
+            vy = max(-mvy, min(mvy, -k * e[0])) if e else 0.0
+            wz = max(-mwz, min(mwz, k * e[1])) if e else 0.0
             self.go(vx=-v, vy=vy, wz=wz)
             self.spin(0.05)
         else:
@@ -852,6 +860,8 @@ class RailServer(Node):
         """
         v = float(self.get_parameter('drive_speed').value)
         k = float(self.get_parameter('align_gain').value)
+        mvy = float(self.get_parameter('track_max_vy').value)
+        mwz = float(self.get_parameter('track_max_wz').value)
         span = float(self.get_parameter('window_s').value)
         frac = float(self.get_parameter('progress_frac').value)
         hard = int(self.get_parameter('stall_windows').value)
@@ -868,8 +878,8 @@ class RailServer(Node):
                 self.say('СЪЕЗД', f'съехали, назад {gone:.2f} м')
                 return True
             e = self.rail_error()
-            vy = max(-0.06, min(0.06, -k * e[0])) if e else 0.0
-            wz = max(-0.20, min(0.20, k * e[1])) if e else 0.0
+            vy = max(-mvy, min(mvy, -k * e[0])) if e else 0.0
+            wz = max(-mwz, min(mwz, k * e[1])) if e else 0.0
             self.go(vx=-v, vy=vy, wz=wz)
             self.spin(0.05)
             if self.now() - t0 > span + 0.5 and self.now() - last > 0.5:

@@ -22,9 +22,11 @@ Twist, то есть это скорость, а не поза, и одомет�
 принципе. Положение ведёт только зрение с ИНС.
 """
 import os
+import tempfile
 
+import yaml
 from ament_index_python.packages import get_package_share_directory
-from launch import LaunchDescription
+from launch import LaunchDescription, Substitution
 from launch.actions import (DeclareLaunchArgument, GroupAction,
                             IncludeLaunchDescription)
 from launch.conditions import IfCondition, UnlessCondition
@@ -34,6 +36,49 @@ from launch_ros.actions import Node, SetRemap
 from launch_ros.parameter_descriptions import ParameterValue
 from typing import List
 from nav2_common.launch import RewrittenYaml
+
+
+class SpeedParams(Substitution):
+    """Файл параметров со скоростями из speeds:=, путь к нему.
+
+    part='nav2' — копия agro_nav2.yaml с пределами из секции nav2;
+    part='rail_server' — параметры сервера рельсов из одноимённой секции.
+    Файл скоростей известен только при запуске, поэтому собирается здесь,
+    а не в generate_launch_description.
+    """
+
+    def __init__(self, pkg, part):
+        super().__init__()
+        self.pkg, self.part = pkg, part
+
+    def perform(self, context):
+        with open(LaunchConfiguration('speeds').perform(context)) as f:
+            sp = yaml.safe_load(f)
+        if self.part == 'rail_server':
+            out = {'rail_server': {'ros__parameters': sp['rail_server']}}
+        else:
+            n = sp['nav2']
+            with open(os.path.join(self.pkg, 'params', 'agro_nav2.yaml')) as f:
+                out = yaml.safe_load(f)
+            mppi = out['controller_server']['ros__parameters']['FollowPath']
+            for k in ('vx_max', 'vx_min', 'vy_max', 'wz_max'):
+                mppi[k] = float(n[k])
+            # Разброс выборок поворота не шире предела, иначе они обрежутся.
+            mppi['wz_std'] = min(float(mppi['wz_std']), float(n['wz_max']))
+            vs = out['velocity_smoother']['ros__parameters']
+            vs['max_velocity'] = [float(n['vx_max']), float(n['vy_max']),
+                                  float(n['wz_max'])]
+            vs['min_velocity'] = [float(n['vx_min']), -float(n['vy_max']),
+                                  -float(n['wz_max'])]
+            bs = out['behavior_server']['ros__parameters']
+            bs['max_rotational_vel'] = float(n['wz_max'])
+            bs['min_rotational_vel'] = min(float(bs['min_rotational_vel']),
+                                           float(n['wz_max']))
+        fd, path = tempfile.mkstemp(prefix=f'speeds_{self.part}_',
+                                    suffix='.yaml')
+        with os.fdopen(fd, 'w') as f:
+            yaml.safe_dump(out, f, allow_unicode=True)
+        return path
 
 
 def generate_launch_description():
@@ -460,7 +505,7 @@ def generate_launch_description():
     # автоматический останов перед препятствием, которое Nav2 проглядел;
     # последняя защита — кнопка X на геймпаде.
     nav_params = RewrittenYaml(
-        source_file=os.path.join(pkg, 'params', 'agro_nav2.yaml'),
+        source_file=SpeedParams(pkg, 'nav2'),
         root_key='', convert_types=True,
         param_rewrites={'cmd_vel_in_topic': '/collision_monitor_unused_in',
                         'cmd_vel_out_topic': '/collision_monitor_unused_out'})
@@ -497,6 +542,9 @@ def generate_launch_description():
     dropoff = Node(package='maze_nav', executable='dropoff_detector.py',
                    output='screen',
                    condition=IfCondition(LaunchConfiguration('dropoff')),
+                   parameters=[{'rail_graph_bind': ParameterValue(
+                       LaunchConfiguration('rail_graph_bind'),
+                       value_type=bool)}],
                    remappings=[('depth', depth),
                                ('camera_info', info),
                                ('dropoff', '/dropoff/points'),
@@ -536,6 +584,7 @@ def generate_launch_description():
     # нет — простаивающий узел не стоит ничего.
     rail_server = Node(package='maze_nav', executable='rail_server.py',
                        name='rail_server', output='screen',
+                       parameters=[SpeedParams(pkg, 'rail_server')],
                        remappings=[('odom', '/odom'), ('imu', '/imu/data'),
                                    ('obstacles', '/rails/map')])
 
@@ -578,6 +627,17 @@ def generate_launch_description():
                                           'стенде при наклоне камеры около '
                                           '50 градусов — нынешние 49 в '
                                           'URDF как раз в этом диапазоне'),
+        DeclareLaunchArgument('speeds',
+                              default_value=os.path.join(pkg, 'params',
+                                                         'speeds.yaml'),
+                              description='скорости Nav2 и заезда, см. '
+                                          'сам файл'),
+        DeclareLaunchArgument('rail_graph_bind', default_value='false',
+                              description='привязать слой рельсов к графу '
+                                          'RTAB-Map, чтобы он не двоился '
+                                          'при дрейфе и сбросе одометрии; '
+                                          'разбор — у параметра в '
+                                          'dropoff_detector.py'),
         DeclareLaunchArgument('cam_imu', default_value='false',
                               description='включить собственную ИНС D435i; '
                                           'нужна для калибровки угла камеры'),
