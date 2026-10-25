@@ -105,10 +105,13 @@ exec docker run -it --rm \
     `# есть не всегда (headless, другая машина), а лишние группы безвредны.` \
     $(getent group video  >/dev/null && echo --group-add "$(getent group video  | cut -d: -f3)") \
     $(getent group render >/dev/null && echo --group-add "$(getent group render | cut -d: -f3)") \
-    --gpus all \
+    `# Видеокарта NVIDIA. Ключ безусловным быть НЕ МОЖЕТ: на машине без` \
+    `# NVIDIA докер отвечает "could not select device driver" и контейнер` \
+    `# не стартует вовсе. Переменная NO_NVIDIA ставится из run_no_nvidia.sh.` \
+    $([ -z "${NO_NVIDIA:-}" ] && echo --gpus all) \
     -e DISPLAY="${DISPLAY}" \
     -e XAUTHORITY=/tmp/.docker.xauth \
-    -e NVIDIA_DRIVER_CAPABILITIES=all \
+    $([ -z "${NO_NVIDIA:-}" ] && printf "%s\\n" -e NVIDIA_DRIVER_CAPABILITIES=all) \
     -e ROS_DOMAIN_ID="${ROS_DOMAIN_ID}" \
     `# Транспорт Fast DDS НЕ навязываем: контейнер работает под тем же UID,` \
     `# что и процессы на хосте (см. --user ниже), поэтому разделяемая память` \
@@ -124,10 +127,15 @@ exec docker run -it --rm \
          printf '%s\n' -e LIBGL_ALWAYS_SOFTWARE=1 -e GALLIUM_DRIVER=llvmpipe \
              -e QT_QPA_PLATFORM=xcb -e QT_X11_NO_MITSHM=1 \
              -e MESA_GL_VERSION_OVERRIDE=3.3
-     else
+     elif [ -z "${NO_NVIDIA:-}" ]; then
          printf '%s\n' -e __NV_PRIME_RENDER_OFFLOAD=1 \
              -e __GLX_VENDOR_LIBRARY_NAME=nvidia
      fi) \
+    `# Третьего случая раньше не было, а он есть: НАСТОЯЩИЙ экран БЕЗ` \
+    `# NVIDIA. Тогда не задаём НИЧЕГО — Mesa сама возьмёт встроенную` \
+    `# видеокарту через /dev/dri, который уже смонтирован ниже. Ветку` \
+    `# noVNC сюда переиспользовать нельзя: там LIBGL_ALWAYS_SOFTWARE=1,` \
+    `# и на Iris Xe с настоящим аппаратным GL это только замедлит RViz.` \
     `# Один путь вместо пары GAZEBO_MODEL_PATH/GAZEBO_RESOURCE_PATH:` \
     `# Gazebo Harmonic ищет и модели, и миры в GZ_SIM_RESOURCE_PATH.` \
     `# Модели TurtleBot3 — первыми: model.sdf тянет меши через` \
