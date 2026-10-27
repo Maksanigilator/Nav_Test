@@ -6,7 +6,7 @@ find_package(ament_cmake REQUIRED)
 # Пакет без кода: только данные. Их надо положить в share/,
 # чтобы launch-файлы находили их через get_package_share_directory().
 install(
-  DIRECTORY launch worlds models maps params scripts behavior_trees rviz urdf meshes
+  DIRECTORY launch worlds models maps params scripts behavior_trees rviz meshes
   DESTINATION share/${PROJECT_NAME}
 )
 
@@ -15,22 +15,11 @@ install(
 # Остальные скрипты в scripts/ запускаются по полному пути (см. RUN.md),
 # им это не нужно.
 install(PROGRAMS
-  scripts/imu_noise.py
   scripts/depth_noise.py
+  scripts/imu_noise.py
   scripts/twist_to_stamped.py
-  scripts/dropoff_detector.py
-  scripts/rail_oracle.py
-  scripts/rail_server.py
-  scripts/cmd_sign.py
-  scripts/pico_imu_node.py
-  scripts/imu_axes.py
-  scripts/imu_watch.py
-  scripts/imu_bias.py
-  scripts/imu_level.py
   scripts/cam_level.py
   scripts/cam_pitch.py
-  scripts/wt901_node.py
-  scripts/rail_entry_monitor.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -52,10 +52,10 @@ class FramePub(Node):
     def __init__(self):
         super().__init__('frame_pub')
         p = self.declare_parameter
-        p('image', os.path.join(HERE, 'rail_frame.png'))
+        p('image', os.path.join(HERE, 'test_frame.png'))
         p('image_topic', '/camera/color/image_raw')
-        p('mask_topic', '/rails/mask')
-        p('stats_topic', '/rails/mask_stats')
+        p('mask_topic', '/segmentation/mask')
+        p('stats_topic', '/segmentation/mask_stats')
         # Кадр камеры подписан именно этим кадром координат. Имя то же, что
         # у настоящей камеры, чтобы конфиг RViz годился и для боевого запуска.
         p('frame_id', 'camera_color_optical_frame')
@@ -192,7 +192,7 @@ class FramePub(Node):
                   f'видеопамять {self.q(self.gpu, 50):.0f} МБ', flush=True)
         else:
             print('замеров от узла маски нет: он старой версии либо '
-                  'не публикует /rails/mask_stats', flush=True)
+                  'не публикует статистику в stats_topic', flush=True)
         print('=' * 64, flush=True)
 
 

@@ -55,7 +55,7 @@ class View(Node):
         super().__init__('mask_view')
         p = self.declare_parameter
         p('image_topic', '/camera/color/image_raw')
-        p('mask_topic', '/rails/mask')
+        p('mask_topic', '/segmentation/mask')
         # Предельное расхождение кадра и маски. Полсекунды — период
         # сегментации на 2 Гц: соседняя маска ещё годится, пропуск уже нет.
         p('max_age', 0.5)
@@ -117,7 +117,7 @@ class View(Node):
                     paint[mk > 0] = (0, 255, 0)
                     out = cv2.addWeighted(out, 0.55, paint, 0.45, 0)
                 note = (f'маска {area} px ({100.0 * area / mk.size:.1f}%)'
-                        if area else 'маска пустая — рельсов не нашлось')
+                        if area else 'маска пустая — ничего не распознано')
         elif self.mask is not None:
             note = 'маска устарела'
 

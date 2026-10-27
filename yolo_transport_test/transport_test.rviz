@@ -35,10 +35,10 @@ Visualization Manager:
         Durability Policy: Volatile
         Reliability Policy: Best Effort
     - Class: rviz_default_plugins/Image
-      Name: Маска рельсов
+      Name: Маска сегментации
       Enabled: true
       Topic:
-        Value: /rails/mask
+        Value: /segmentation/mask
         Depth: 2
         Durability Policy: Volatile
         Reliability Policy: Best Effort
@@ -63,7 +63,7 @@ Window Geometry:
     collapsed: false
   Отправлено:
     collapsed: false
-  Маска рельсов:
+  Маска сегментации:
     collapsed: false
   Height: 800
   Width: 1600

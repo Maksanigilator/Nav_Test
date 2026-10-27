@@ -5,7 +5,11 @@
 Узел сегментации сюда НЕ входит и входить не может: он живёт в другом
 контейнере, с видеокартой и ultralytics. Его поднимают отдельно:
 
-    cd ~/roshack/Roshack-yolodocker && docker compose up rail_mask
+    cd <репозиторий сегментации> && docker compose up <служба маски>
+
+Топики по умолчанию обобщены: /segmentation/mask и /segmentation/mask_stats.
+Под конкретную модель задаются ключами mask_topic и stats_topic — у узла
+рельсов, например, это /rails/mask.
 
 Файл лежит рядом со скриптами, а не в пакете maze_nav: к сборке ROS
 стенд отношения не имеет, и держать его отдельно проще. Поэтому издатель
@@ -14,7 +18,7 @@
 
 ПРО ЧАСТОТУ. По умолчанию 1 Гц: сперва надо убедиться, что кадр вообще
 доходит. Разгонять есть смысл до 2-3 Гц и не выше — RTAB-Map обрабатывает
-2 Гц (Rtabmap/DetectionRate в robot_nav.launch.py), и всё, что приходит
+2 Гц (Rtabmap/DetectionRate в запуске карты), и всё, что приходит
 чаще, он отбрасывает. Большие частоты имеют смысл только как нагрузочная
 проба транспорта, а не как рабочий режим.
 """
@@ -53,7 +57,7 @@ def generate_launch_description():
                               description='частота отправки кадра, Гц'),
         DeclareLaunchArgument('image',
                               default_value=os.path.join(HERE,
-                                                         'rail_frame.png'),
+                                                         'test_frame.png'),
                               description='какой кадр слать'),
         DeclareLaunchArgument('report_every', default_value='10.0',
                               description='как часто печатать сводку, с'),
