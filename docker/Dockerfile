@@ -165,8 +165,26 @@ RUN mkdir -p /root/ros_ws/src /root/ros_ws/build /root/ros_ws/install /root/.gz 
 #и рабочее пространство, и настройки zsh с oh-my-zsh, которые оболочка читает
 #при каждом входе. HOME=/root контейнеру задаёт run.sh.
 
-
-# ═══ Слой ZED: вторая камера на выбор ═══
+# ═══ Слой ZED: ВЫКЛЮЧЕН, оставлен как справка ═══
+#
+# Закомментирован 27 октября 2026. Причина — вес: SDK Stereolabs вместе с
+# CUDA и собранными движками TensorRT занимал около 25 ГБ из 32.7 ГБ образа,
+# а камера ZED в текущих работах не используется. Без него образ собирается
+# примерно в 7.5 ГБ. Код обёртки при этом никуда не делся — он ниже, просто
+# закомментирован, и рабочий вариант целиком лежит в истории:
+#
+#     git show archive/rgbd-nav-2026-10-27:docker/Dockerfile
+#
+# ЧТОБЫ ВЕРНУТЬ ZED, одного раскомментирования мало. Нужно ещё:
+#   * docker/entrypoint.sh — подключить /opt/zed_ws ДО нашего ros_ws,
+#     строкой [ -f /opt/zed_ws/install/setup.zsh ] && source того же;
+#   * run.sh — вернуть монтирования /usr/local/zed/settings и
+#     /usr/local/zed/resources (почему они снаружи образа — ниже по тексту);
+#   * docker/99-slabs.rules — правила udev поставить на ХОСТ, иначе модуль
+#     датчиков ZED-M не открывается.
+#
+# Дальше — исходный блок без единой правки, только с решётками.
+#
 #
 # ZED Mini вместо RealSense включается аргументом camera:=zed в
 # robot_nav.launch.py. RealSense при этом никуда не девается — обе ветки
@@ -191,15 +209,15 @@ RUN mkdir -p /root/ros_ws/src /root/ros_ws/build /root/ros_ws/install /root/.gz 
 # Установщик ставит CUDA сам, если её нет. skip_tools и skip_drivers
 # выбрасывают графические утилиты и драйвер видеокарты: первые в
 # контейнере без надобности, второй приходит с хоста.
-ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      zstd udev libgl1 libusb-1.0-0 \
-    && rm -rf /var/lib/apt/lists/*
+# ENV DEBIAN_FRONTEND=noninteractive
+# RUN apt-get update && apt-get install -y --no-install-recommends \
+#       zstd udev libgl1 libusb-1.0-0 \
+#     && rm -rf /var/lib/apt/lists/*
 # Скачивание и установка РАЗНЫМИ слоями: установщик весит 1.35 ГБ, и
 # если держать их вместе, любая правка ключей тянет его заново.
-RUN curl -sL -o /tmp/zed.run \
-      https://download.stereolabs.com/zedsdk/5.5/cu12/ubuntu24 \
-    && chmod +x /tmp/zed.run
+# RUN curl -sL -o /tmp/zed.run \
+#       https://download.stereolabs.com/zedsdk/5.5/cu12/ubuntu24 \
+#     && chmod +x /tmp/zed.run
 
 # КЛЮЧИ ЗДЕСЬ РАЗНОСТОРОННИЕ, и порядок важен. Это самораспаковывающийся
 # архив makeself: ДО двойного тире идут ключи самого makeself, ПОСЛЕ —
@@ -214,8 +232,8 @@ RUN curl -sL -o /tmp/zed.run \
 # После тире: silent — без вопросов, skip_tools — без графических
 # утилит (в контейнере не нужны), skip_drivers — без драйвера
 # видеокарты, он приходит с хоста через --gpus all.
-RUN /tmp/zed.run --accept --quiet -- silent skip_tools skip_drivers \
-    && rm -f /tmp/zed.run
+# RUN /tmp/zed.run --accept --quiet -- silent skip_tools skip_drivers \
+#     && rm -f /tmp/zed.run
 
 # Обёртка ROS живёт в ОТДЕЛЬНОМ рабочем пространстве /opt/zed_ws, а не в
 # /root/ros_ws/src. Причина простая: src примонтирован с хоста, и всё,
@@ -235,47 +253,47 @@ RUN /tmp/zed.run --accept --quiet -- silent skip_tools skip_drivers \
 # diagnostic_updater, theora_image_transport и так далее, — и
 # перечислять их вручную значит возвращаться сюда после каждой новой
 # ошибки. rosdep читает их из package.xml сам.
-RUN mkdir -p /opt/zed_ws/src && cd /opt/zed_ws/src \
-    && git clone --depth 1 -b v5.5.0 \
-       https://github.com/stereolabs/zed-ros2-wrapper.git \
-    && git clone --depth 1 \
-       https://github.com/stereolabs/zed-ros2-interfaces.git \
-    && cd /opt/zed_ws \
-    && apt-get update \
-    `# rosdep ставим ЗДЕСЬ, а не в раннем слое с zstd и udev. Дописав` \
-    `# туда, мы бы обесценили следующие слои, и пересборка заново качала` \
-    `# бы установщик SDK и всю CUDA — восемнадцать минут впустую.` \
-    && apt-get install -y --no-install-recommends python3-rosdep \
-    && (rosdep init 2>/dev/null || true) \
-    && rosdep update --rosdistro jazzy \
-    && rosdep install --from-paths src --ignore-src -r -y --rosdistro jazzy \
-    && . /opt/ros/jazzy/setup.sh \
-    `# zed_debug ПРОПУСКАЕМ, и это не лень, а невозможность.` \
-    `#` \
-    `# Он собирает ИСПОЛНЯЕМЫЙ файл, а тот требует libcuda.so.1,` \
-    `# libnvcuvid.so.1 и libnvidia-encode.so.1 — библиотеки ДРАЙВЕРА` \
-    `# видеокарты. При сборке образа видеокарты нет, и взяться им` \
-    `# неоткуда: их подкладывает прослойка NVIDIA в момент запуска, по` \
-    `# флагу --gpus all в run.sh. Отсюда ворох undefined reference на` \
-    `# cuInit, cuMemAlloc_v2 и прочие вызовы драйвера.` \
-    `#` \
-    `# Остальные четыре пакета собираются как БИБЛИОТЕКИ, у них` \
-    `# неразрешённые символы откладываются до загрузки — и на запущенном` \
-    `# контейнере разрешаются, потому что там драйвер уже есть.` \
-    `#` \
-    `# Сам zed_debug это отладочная утилита, для работы камеры не нужна.` \
-    `# БЕЗ --symlink-install, и это важно. При нём colcon не копирует` \
-    `# файлы в install, а ССЫЛАЕТСЯ на них в build и src. Мы build тут же` \
-    `# удаляем, чтобы не раздувать образ, — и ссылки осыпаются: install` \
-    `# остаётся с одними верхнеуровневыми скриптами, а каталогов пакетов` \
-    `# в нём нет. Снаружи выглядит как успешная сборка, но ros2 pkg list` \
-    `# пакетов не видит, и запуск падает на not found.` \
-    `#` \
-    `# Для своего кода symlink-установка удобна — правки подхватываются` \
-    `# без пересборки, — но здесь чужой код, который мы не трогаем.` \
-    && colcon build --packages-skip zed_debug \
-       --cmake-args -DCMAKE_BUILD_TYPE=Release \
-    && rm -rf /opt/zed_ws/build /opt/zed_ws/log /var/lib/apt/lists/*
+# RUN mkdir -p /opt/zed_ws/src && cd /opt/zed_ws/src \
+#     && git clone --depth 1 -b v5.5.0 \
+#        https://github.com/stereolabs/zed-ros2-wrapper.git \
+#     && git clone --depth 1 \
+#        https://github.com/stereolabs/zed-ros2-interfaces.git \
+#     && cd /opt/zed_ws \
+#     && apt-get update \
+#     `# rosdep ставим ЗДЕСЬ, а не в раннем слое с zstd и udev. Дописав` \
+#     `# туда, мы бы обесценили следующие слои, и пересборка заново качала` \
+#     `# бы установщик SDK и всю CUDA — восемнадцать минут впустую.` \
+#     && apt-get install -y --no-install-recommends python3-rosdep \
+#     && (rosdep init 2>/dev/null || true) \
+#     && rosdep update --rosdistro jazzy \
+#     && rosdep install --from-paths src --ignore-src -r -y --rosdistro jazzy \
+#     && . /opt/ros/jazzy/setup.sh \
+#     `# zed_debug ПРОПУСКАЕМ, и это не лень, а невозможность.` \
+#     `#` \
+#     `# Он собирает ИСПОЛНЯЕМЫЙ файл, а тот требует libcuda.so.1,` \
+#     `# libnvcuvid.so.1 и libnvidia-encode.so.1 — библиотеки ДРАЙВЕРА` \
+#     `# видеокарты. При сборке образа видеокарты нет, и взяться им` \
+#     `# неоткуда: их подкладывает прослойка NVIDIA в момент запуска, по` \
+#     `# флагу --gpus all в run.sh. Отсюда ворох undefined reference на` \
+#     `# cuInit, cuMemAlloc_v2 и прочие вызовы драйвера.` \
+#     `#` \
+#     `# Остальные четыре пакета собираются как БИБЛИОТЕКИ, у них` \
+#     `# неразрешённые символы откладываются до загрузки — и на запущенном` \
+#     `# контейнере разрешаются, потому что там драйвер уже есть.` \
+#     `#` \
+#     `# Сам zed_debug это отладочная утилита, для работы камеры не нужна.` \
+#     `# БЕЗ --symlink-install, и это важно. При нём colcon не копирует` \
+#     `# файлы в install, а ССЫЛАЕТСЯ на них в build и src. Мы build тут же` \
+#     `# удаляем, чтобы не раздувать образ, — и ссылки осыпаются: install` \
+#     `# остаётся с одними верхнеуровневыми скриптами, а каталогов пакетов` \
+#     `# в нём нет. Снаружи выглядит как успешная сборка, но ros2 pkg list` \
+#     `# пакетов не видит, и запуск падает на not found.` \
+#     `#` \
+#     `# Для своего кода symlink-установка удобна — правки подхватываются` \
+#     `# без пересборки, — но здесь чужой код, который мы не трогаем.` \
+#     && colcon build --packages-skip zed_debug \
+#        --cmake-args -DCMAKE_BUILD_TYPE=Release \
+#     && rm -rf /opt/zed_ws/build /opt/zed_ws/log /var/lib/apt/lists/*
 
 # ═══ Права на SDK для непривилегированного пользователя ═══
 #
@@ -289,7 +307,7 @@ RUN mkdir -p /opt/zed_ws/src && cd /opt/zed_ws/src \
 # правах на файл.
 #
 # Открываем только ЧТЕНИЕ и ВЫПОЛНЕНИЕ (a+rX), запись оставляем root.
-RUN chmod -R a+rX /usr/local/zed /usr/local/cuda-12.9 2>/dev/null || true
+# RUN chmod -R a+rX /usr/local/zed /usr/local/cuda-12.9 2>/dev/null || true
 
 # Каталог заводских калибровок — НА ЗАПИСЬ, в отличие от остального SDK.
 # При первом подключении камеры SDK скачивает в него файл под её
@@ -300,7 +318,8 @@ RUN chmod -R a+rX /usr/local/zed /usr/local/cuda-12.9 2>/dev/null || true
 # Сам каталог обычно перекрыт монтированием из run.sh, чтобы калибровка
 # пережила пересборку образа; права здесь нужны на случай запуска без
 # него.
-RUN mkdir -p /usr/local/zed/settings && chmod -R a+rwX /usr/local/zed/settings
+# RUN mkdir -p /usr/local/zed/settings && chmod -R a+rwX /usr/local/zed/settings
+
 
 # Каталог кеша под оболочку. oh-my-zsh создаёт его при каждом входе, а
 # под чужим UID не может — и каждая команда начиналась со строки
