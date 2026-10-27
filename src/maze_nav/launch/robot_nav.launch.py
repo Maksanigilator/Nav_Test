@@ -31,8 +31,10 @@ from launch.actions import (DeclareLaunchArgument, GroupAction,
                             IncludeLaunchDescription)
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import PythonExpression, Command, LaunchConfiguration
+from launch.substitutions import (PythonExpression, Command, LaunchConfiguration,
+                                  PathJoinSubstitution)
 from launch_ros.actions import Node, SetRemap
+from launch_ros.substitutions import FindPackageShare
 from launch_ros.parameter_descriptions import ParameterValue
 from typing import List
 from nav2_common.launch import RewrittenYaml
@@ -193,10 +195,17 @@ def generate_launch_description():
             SetRemap('/zed/zed_node/rgb/color/rect/image', rgb),
             SetRemap('/zed/zed_node/rgb/color/rect/camera_info', info),
             SetRemap('/zed/zed_node/depth/depth_registered', depth),
+            # ПУТЬ ИЩЕТСЯ ЛЕНИВО, подстановкой, а не get_package_share_directory.
+            # Слой ZED из образа убран (см. docker/Dockerfile), и пакета
+            # zed_wrapper в нём нет. Обычный поиск сработал бы ПРИ СБОРКЕ
+            # описания запуска — то есть при ЛЮБОМ camera:=, в том числе
+            # realsense, — и весь запуск падал бы на PackageNotFoundError.
+            # FindPackageShare разворачивается только когда группа реально
+            # исполняется, а её держит IfCondition(use_zed).
             IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(os.path.join(
-                    get_package_share_directory('zed_wrapper'), 'launch',
-                    'zed_camera.launch.py')),
+                PythonLaunchDescriptionSource(PathJoinSubstitution([
+                    FindPackageShare('zed_wrapper'), 'launch',
+                    'zed_camera.launch.py'])),
                 launch_arguments={
                     'camera_model': 'zedm',
                     'camera_name': 'zed',
