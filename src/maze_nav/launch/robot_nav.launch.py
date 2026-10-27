@@ -541,11 +541,17 @@ def generate_launch_description():
     # просто не красит ничего зелёным, а кромку находит как обычно.
     dropoff = Node(package='maze_nav', executable='dropoff_detector.py',
                    output='screen',
-                   parameters=[{'rail_accumulate': ParameterValue(LaunchConfiguration('legacy_rails'), value_type=bool)}],
+                   # Два параметра, слитых из разных веток. rail_accumulate
+                   # привязан к legacy_rails: слой рельсов нужен только
+                   # нашей реализации заезда, у rail_stage1 своя геометрия.
+                   parameters=[{
+                       'rail_accumulate': ParameterValue(
+                           LaunchConfiguration('legacy_rails'),
+                           value_type=bool),
+                       'rail_graph_bind': ParameterValue(
+                           LaunchConfiguration('rail_graph_bind'),
+                           value_type=bool)}],
                    condition=IfCondition(LaunchConfiguration('dropoff')),
-                   parameters=[{'rail_graph_bind': ParameterValue(
-                       LaunchConfiguration('rail_graph_bind'),
-                       value_type=bool)}],
                    remappings=[('depth', depth),
                                ('camera_info', info),
                                ('dropoff', '/dropoff/points'),
@@ -594,13 +600,39 @@ def generate_launch_description():
                 condition=IfCondition(LaunchConfiguration('rviz')),
                 arguments=['-d', os.path.join(pkg, 'rviz', 'nav.rviz')])
 
-    # New rail modules: discovery starts disabled; approach requires an explicit action.
+    # Узлы поиска и подъезда Влада. Поиск у него по умолчанию выключен и
+    # ждёт вызова, подъезд требует явного действия.
+    #
+    # ЭТО ПЕРЕКЛЮЧАТЕЛЬ, А НЕ ДВА НЕЗАВИСИМЫХ ФЛАЖКА. Обе реализации
+    # командуют движением через /cmd_nav_raw, и поднять обе разом значит
+    # дать приводу двух хозяев. У rail_stage1 для этого есть файловая
+    # блокировка (motion_lease.py), но rail_server о ней не знает, так что
+    # защиты от одновременной работы нет вовсе. Поэтому включение
+    # legacy_rails ГАСИТ stage1, а не добавляется к нему.
+    #
+    # rviz:=false передаётся ЯВНО. У вложенного запуска свой RViz со своим
+    # конфигом, и собственное умолчание false у него есть — но настройки с
+    # одинаковым именем НАСЛЕДУЮТСЯ от родителя, а у нас rviz=true. Из-за
+    # этого открывались два окна сразу.
+    _on = "'.lower() in ('true', '1', 'yes')"
     stage1 = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(os.path.join(get_package_share_directory('rail_stage1'), 'launch', 'rail_stage1.launch.py')),
-        condition=IfCondition(LaunchConfiguration('rail_stage1')))
+        PythonLaunchDescriptionSource(os.path.join(
+            get_package_share_directory('rail_stage1'), 'launch',
+            'rail_stage1.launch.py')),
+        launch_arguments={'rviz': 'false'}.items(),
+        condition=IfCondition(PythonExpression([
+            "'", LaunchConfiguration('rail_stage1'), _on,
+            " and not '", LaunchConfiguration('legacy_rails'), _on])))
 
     return LaunchDescription([
-        DeclareLaunchArgument('legacy_rails', default_value='false', description='Enable deprecated rail detector/server'),
+        # Наша реализация заезда: накопленный слой рельсов в
+        # dropoff_detector плюс rail_server с действиями /rail_entry и
+        # /rail_exit. НЕ устаревшая — оставлена как вторая для сравнения,
+        # просто основной сейчас считается rail_stage1. Включение гасит
+        # stage1, см. комментарий у его подключения выше.
+        DeclareLaunchArgument('legacy_rails', default_value='false',
+                              description='наша реализация заезда вместо '
+                                          'rail_stage1; гасит stage1'),
         DeclareLaunchArgument('rail_stage1', default_value='true', description='Load switchable map-based discovery and independent approach'),
         DeclareLaunchArgument('imu', default_value='true',
                               description='брать ИНС с платы на Pico'),
