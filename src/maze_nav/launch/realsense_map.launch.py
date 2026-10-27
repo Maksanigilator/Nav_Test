@@ -36,10 +36,7 @@ def generate_launch_description():
     prof = LaunchConfiguration('profile')
     db = LaunchConfiguration('db')
 
-    src = LaunchConfiguration('imu_source')
-    use_pico = PythonExpression(["'", src, "' == 'pico'"])
-    use_cam_imu = PythonExpression(
-        ["'", src, "' == 'camera' and '", imu, "'.lower() in ('true','1')"])
+    use_cam_imu = PythonExpression(["'", imu, "'.lower() in ('true','1')"])
 
 
     # Топики драйвера. camera_namespace пустой, иначе они уезжают в
@@ -73,9 +70,9 @@ def generate_launch_description():
             'enable_sync': 'true',
             'depth_module.depth_profile': prof,
             'rgb_camera.color_profile': prof,
-            # Потоки ИНС камеры поднимаем, только если она и есть
-            # источник: при imu_source:=pico они лишние и мешают, потому
-            # что их открытие падает на занятом ядром модуле движения.
+            # Потоки ИНС камеры поднимаем только при imu:=true: у обычного
+            # D435 их нет вовсе, а открытие несуществующего модуля движения
+            # роняет драйвер.
             'enable_gyro': use_cam_imu,
             'enable_accel': use_cam_imu,
             # 2 — линейная интерполяция: гироскоп и акселерометр сводятся в
@@ -208,28 +205,14 @@ def generate_launch_description():
 
     # ИСТОЧНИК ИНС: камера или отдельная плата.
     #
-    # У D435i ИНС есть, но ядро Linux забирает её себе модулями hid_sensor_*,
-    # и librealsense тогда не может открыть модуль движения. Лечится
-    # выгрузкой этих модулей на ХОСТЕ, но не везде это допустимо. Поэтому
-    # есть второй путь: MPU6050 на Pico, поток по USB CDC. Прошивка лежит
-    # в корне проекта, pico_imu.py.
-    pico = Node(
-        package='maze_nav', executable='pico_imu_node.py', output='screen',
-        condition=IfCondition(use_pico),
-        parameters=[{'port': LaunchConfiguration('imu_port'),
-                     'frame_id': 'imu_link',
-                     'axes': LaunchConfiguration('imu_axes')}],
-        remappings=[('imu/data_raw', '/imu/data_raw')])
-
-    # Связка камеры с платой ИНС. По умолчанию единичная: как датчик
-    # реально повёрнут относительно камеры, знает только тот, кто его
-    # прикручивал. Если он стоит криво, ориентация приедет с постоянным
-    # наклоном, и это будет видно как заваленный горизонт в карте.
-    pico_tf = Node(
-        package='tf2_ros', executable='static_transform_publisher',
-        condition=IfCondition(use_pico),
-        arguments=['--frame-id', 'camera_link', '--child-frame-id',
-                   'imu_link'])
+    # ЕСЛИ ИНС КАМЕРЫ НЕ ОТКРЫВАЕТСЯ. У D435i она есть, но ядро Linux
+    # забирает её себе модулями hid_sensor_*, и librealsense тогда не может
+    # открыть модуль движения. Лечится выгрузкой этих модулей НА ХОСТЕ:
+    #     sudo modprobe -r hid_sensor_accel_3d hid_sensor_gyro_3d \
+    #                      hid_sensor_trigger hid_sensor_iio_common
+    # Раньше здесь был второй путь на случай, когда выгрузка недопустима:
+    # MPU6050 на Pico с потоком по USB CDC. Он удалён — смотри коммит
+    # с удалением Pico, если понадобится вернуть.
 
     # Сырые гироскоп с акселерометром — это не ориентация. Фильтр Маджвика
     # сводит их в кватернион, который и ждёт RTAB-Map.
@@ -247,11 +230,9 @@ def generate_launch_description():
                      # TF от фильтра не нужен: дерево кадров ведёт драйвер
                      # камеры, и вторая рука в нём всё только испортит.
                      'publish_tf': False}],
-        # Откуда брать сырые данные, решает imu_source: у камеры они в
-        # /camera/imu, у платы — в /imu/data_raw, который и так наш.
-        remappings=[('imu/data_raw', PythonExpression(
-                        ["'/imu/data_raw' if '", src,
-                         "' == 'pico' else '/camera/imu'"])),
+        # Сырые данные у камеры лежат в /camera/imu — туда их сводит
+        # unite_imu_method выше.
+        remappings=[('imu/data_raw', '/camera/imu'),
                     ('imu/data', '/imu/data')])
 
     # Одометрия. Кадр опоры — корпус камеры: другого твёрдого тела здесь
@@ -349,15 +330,6 @@ def generate_launch_description():
         DeclareLaunchArgument('imu', default_value='true',
                               description='есть ли ИНС в камере: у D435i '
                                           'есть, у обычного D435 нет'),
-        DeclareLaunchArgument('imu_source', default_value='camera',
-                              description="откуда брать ИНС: 'camera' "
-                                          "(D435i) или 'pico' (MPU6050 на "
-                                          "плате, см. pico_imu.py)"),
-        DeclareLaunchArgument('imu_port', default_value='/dev/ttyACM0',
-                              description='порт платы с MPU6050'),
-        DeclareLaunchArgument('imu_axes', default_value='x y z',
-                              description='разворот осей датчика в оси ROS, '
-                                          "например '-y x z'"),
         DeclareLaunchArgument('profile', default_value='848x480x30',
                               description='разрешение и частота потоков'),
         DeclareLaunchArgument('db', default_value='/datasets/handheld.db',
@@ -423,5 +395,5 @@ def generate_launch_description():
                               description='окно RViz с нашим конфигом: в нём '
                                           'живёт слой плотного текстурного '
                                           'облака всей карты'),
-        realsense, zed, imu_filter, pico, pico_tf, odom_imu, odom_plain, slam_fresh, slam_keep, viz, rviz,
+        realsense, zed, imu_filter, odom_imu, odom_plain, slam_fresh, slam_keep, viz, rviz,
     ])

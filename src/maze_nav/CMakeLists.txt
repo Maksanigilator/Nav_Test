@@ -22,7 +22,6 @@ install(PROGRAMS
   scripts/rail_oracle.py
   scripts/rail_server.py
   scripts/cmd_sign.py
-  scripts/pico_imu_node.py
   scripts/imu_axes.py
   scripts/imu_watch.py
   scripts/imu_bias.py

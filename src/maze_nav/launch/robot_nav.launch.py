@@ -113,6 +113,12 @@ def generate_launch_description():
     # ZED 32FC1 в метрах, — но и это уже учтено: детектор различает их по
     # полю encoding, а отбор отсчётов идёт через isfinite, что ловит и
     # NaN от ZED, и нули от RealSense.
+    # Потоки ИНС камеры нужны и когда она источник ориентации (imu), и
+    # когда снимают угол крепления (cam_imu).
+    cam_imu_on = PythonExpression(
+        ["'", LaunchConfiguration('imu'), "'.lower() in ('true','1','yes')"
+         " or '", LaunchConfiguration('cam_imu'),
+         "'.lower() in ('true','1','yes')"])
     use_rs = PythonExpression(
         ["'", LaunchConfiguration('camera'), "' != 'zed'"])
     use_zed = PythonExpression(
@@ -152,8 +158,13 @@ def generate_launch_description():
             #
             # Если драйвер ругнётся на доступ — выгрузить модули ядра,
             # которые забрали прибор себе: sudo modprobe -r hid_sensor_accel_3d
-            'enable_gyro': LaunchConfiguration('cam_imu'),
-            'enable_accel': LaunchConfiguration('cam_imu'),
+            'enable_gyro': cam_imu_on,
+            'enable_accel': cam_imu_on,
+            # 2 — линейная интерполяция: гироскоп и акселерометр сводятся
+            # в ОДИН топик /camera/imu. Без этого они идут раздельно, с
+            # разными frame_id, и rtabmap постоянно сбрасывает свой буфер
+            # ИНС, а фильтру ориентации их нечем связать.
+            'unite_imu_method': '2',
             'initial_reset': 'false',
         }.items(),
         condition=IfCondition(use_rs))
@@ -263,52 +274,24 @@ def generate_launch_description():
         ])
 
     # ═══ ИНС ═══
-    pico = Node(package='maze_nav', executable='pico_imu_node.py',
-                name='pico_imu', output='screen',
-                condition=IfCondition(imu),
-                parameters=[{'port': LaunchConfiguration('imu_port'),
-                             'frame_id': 'imu_link',
-                             'axes': LaunchConfiguration('imu_axes'),
-                             'gyro_bias': ParameterValue(
-                                 LaunchConfiguration('gyro_bias'),
-                                 value_type=List[float]),
-                             # ЧУВСТВИТЕЛЬНОСТЬ АКСЕЛЕРОМЕТРА ЗАДАНА ЯВНО.
-                             #
-                             # Узел умеет выбирать её по формату кадра и
-                             # для подлинного MPU6050 выбрал бы верно:
-                             # регистр диапазона у нас читается 0x08, что
-                             # по документации означает +-4 g и 8192
-                             # отсчёта на g.
-                             #
-                             # Но чип на плате НЕ ПОДЛИННЫЙ: WHO_AM_I
-                             # отвечает 0x70 вместо 0x68. У клонов
-                             # раскладка битов диапазона бывает сдвинута,
-                             # и здесь именно так. Замерено на неподвижном
-                             # роботе: тяжесть выходила 4.92 м/с² вместо
-                             # 9.81, то есть ровно вдвое меньше. Значит
-                             # чувствительность 4096, как у +-8 g.
-                             #
-                             # Проверено чтением регистра: запись проходит,
-                             # чип отдаёт обратно ровно то, что записали.
-                             # То есть виновата не прошивка, а раскладка
-                             # конкретного экземпляра.
-                             #
-                             # Проверка после правки: imu_level.py должен
-                             # показать |a| около 9.81. Если выйдет 19.6 —
-                             # поставили не тому чипу, вернуть 0 (выбор по
-                             # формату кадра).
-                             'accel_lsb_per_g': 4096.0,
-                             'accel_bias': ParameterValue(
-                                 LaunchConfiguration('accel_bias'),
-                                 value_type=List[float])}],
-                remappings=[('imu/data_raw', '/imu/data_raw')])
+    #
+    # Источник — СОБСТВЕННАЯ ИНС КАМЕРЫ. Раньше здесь был MPU6050 на Pico,
+    # он удалён: датчик внутри D435i меряет наклон САМОЙ КАМЕРЫ, то есть
+    # ровно ту величину, которая нужна подгонке плоскости, и размечает его
+    # теми же часами, что кадры глубины. Плата на корпусе давала наклон
+    # корпуса и метку времени, поставленную хостом при приёме по USB.
+    #
+    # Если драйвер не сможет открыть модуль движения — ядро забрало прибор
+    # себе: sudo modprobe -r hid_sensor_accel_3d hid_sensor_gyro_3d
     madgwick = Node(package='imu_filter_madgwick',
                     executable='imu_filter_madgwick_node',
                     name='imu_filter', output='screen',
                     condition=IfCondition(imu),
                     parameters=[{'use_mag': False, 'world_frame': 'enu',
                                  'publish_tf': False}],
-                    remappings=[('imu/data_raw', '/imu/data_raw'),
+                    # Сырые данные у камеры в /camera/imu: туда их сводит
+                    # unite_imu_method выше.
+                    remappings=[('imu/data_raw', '/camera/imu'),
                                 ('imu/data', '/imu/data')])
 
     # ═══ Одометрия ═══
@@ -635,17 +618,8 @@ def generate_launch_description():
                                           'rail_stage1; гасит stage1'),
         DeclareLaunchArgument('rail_stage1', default_value='true', description='Load switchable map-based discovery and independent approach'),
         DeclareLaunchArgument('imu', default_value='true',
-                              description='брать ИНС с платы на Pico'),
-        DeclareLaunchArgument('imu_port', default_value='/dev/ttyACM0'),
-        DeclareLaunchArgument('imu_axes', default_value='x y z',
-                              description='разворот осей датчика; подобрать '
-                                          'помощником imu_axes.py'),
-        DeclareLaunchArgument('gyro_bias', default_value='[0.0, 0.0, 0.0]',
-                              description='смещение нуля гироскопа, рад/с; '
-                                          'замеряется imu_bias.py и без него '
-                                          'курс уходит на градусы в минуту'),
-        DeclareLaunchArgument('accel_bias', default_value='[0.0, 0.0, 0.0]',
-                              description='смещение нуля акселерометра, м/с²'),
+                              description='брать ориентацию с собственной '
+                                          'ИНС камеры D435i'),
         DeclareLaunchArgument('zed_res', default_value='HD720',
                               description='разрешение ZED: HD2K, HD1080, '
                                           'HD720, VGA'),
@@ -704,7 +678,7 @@ def generate_launch_description():
                               'исправления, иначе инвертор развернёт '
                               'уже верный знак обратно'),
         DeclareLaunchArgument('rviz', default_value='true'),
-        rsp, camera, zed, pico, madgwick, odom_imu, odom_plain,
+        rsp, camera, zed, madgwick, odom_imu, odom_plain,
         rail_server,
         stage1,
         slam_plain, slam_edge, dropoff, nav2, sign, rviz,

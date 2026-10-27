@@ -53,7 +53,7 @@ class Watch(Node):
 
     def show(self):
         if not self.a:
-            print('данных нет — запущен ли pico_imu.launch.py?')
+            print('данных нет — запущена ли ИНС (imu:=true)?')
             return
         a = [sum(r[k] for r in self.a) / len(self.a) for k in range(3)]
         g = [math.degrees(sum(r[k] for r in self.g) / len(self.g))
