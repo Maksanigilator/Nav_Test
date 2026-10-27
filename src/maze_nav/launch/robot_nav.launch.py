@@ -541,6 +541,7 @@ def generate_launch_description():
     # просто не красит ничего зелёным, а кромку находит как обычно.
     dropoff = Node(package='maze_nav', executable='dropoff_detector.py',
                    output='screen',
+                   parameters=[{'rail_accumulate': ParameterValue(LaunchConfiguration('legacy_rails'), value_type=bool)}],
                    condition=IfCondition(LaunchConfiguration('dropoff')),
                    parameters=[{'rail_graph_bind': ParameterValue(
                        LaunchConfiguration('rail_graph_bind'),
@@ -585,6 +586,7 @@ def generate_launch_description():
     rail_server = Node(package='maze_nav', executable='rail_server.py',
                        name='rail_server', output='screen',
                        parameters=[SpeedParams(pkg, 'rail_server')],
+                       condition=IfCondition(LaunchConfiguration('legacy_rails')),
                        remappings=[('odom', '/odom'), ('imu', '/imu/data'),
                                    ('obstacles', '/rails/map')])
 
@@ -592,7 +594,14 @@ def generate_launch_description():
                 condition=IfCondition(LaunchConfiguration('rviz')),
                 arguments=['-d', os.path.join(pkg, 'rviz', 'nav.rviz')])
 
+    # New rail modules: discovery starts disabled; approach requires an explicit action.
+    stage1 = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(os.path.join(get_package_share_directory('rail_stage1'), 'launch', 'rail_stage1.launch.py')),
+        condition=IfCondition(LaunchConfiguration('rail_stage1')))
+
     return LaunchDescription([
+        DeclareLaunchArgument('legacy_rails', default_value='false', description='Enable deprecated rail detector/server'),
+        DeclareLaunchArgument('rail_stage1', default_value='true', description='Load switchable map-based discovery and independent approach'),
         DeclareLaunchArgument('imu', default_value='true',
                               description='брать ИНС с платы на Pico'),
         DeclareLaunchArgument('imu_port', default_value='/dev/ttyACM0'),
@@ -665,5 +674,6 @@ def generate_launch_description():
         DeclareLaunchArgument('rviz', default_value='true'),
         rsp, camera, zed, pico, madgwick, odom_imu, odom_plain,
         rail_server,
+        stage1,
         slam_plain, slam_edge, dropoff, nav2, sign, rviz,
     ])

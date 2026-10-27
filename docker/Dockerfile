@@ -328,3 +328,12 @@ RUN chmod +x /tmp/entrypoint.sh
 
 ENTRYPOINT ["/tmp/entrypoint.sh"]
 CMD ["zsh"]
+
+# Local pip dependencies installed by the SDK can have root-only permissions.
+# Allow the robot user's group (1000) to read only these five public packages
+# and their metadata; do not change permissions of other Python packages.
+RUN for pkg in certifi charset_normalizer requests idna urllib3; do \
+      find /usr/local/lib/python3.12/dist-packages -maxdepth 1 -type d \
+        \( -name "$pkg" -o -name "$pkg-*.dist-info" \) \
+        -exec chgrp -R 1000 {} + -exec chmod -R g+rX {} +; \
+    done

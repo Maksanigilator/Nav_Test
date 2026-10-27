@@ -35,3 +35,6 @@ isaac/assets/environments/
 # .stl в src/maze_nav/meshes/. Команды пересборки — в RUN.md, этап 4.
 *.step
 *.STEP
+
+# Offline stage-1 replay artifacts
+experiments/stage1_results/

@@ -1,0 +1,66 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Global Options:
+    Fixed Frame: map
+    Background Color: 35; 35; 35
+    Frame Rate: 15
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Cell Size: 0.5
+    - Class: rviz_default_plugins/Map
+      Name: SLAM map
+      Enabled: true
+      Topic:
+        Value: /map
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+      Alpha: 0.7
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Rail entry and approach
+      Enabled: true
+      Marker Topic:
+        Value: /rails/approach_markers
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+    - Class: rviz_default_plugins/Pose
+      Name: Requested approach target
+      Enabled: true
+      Topic:
+        Value: /rails/approach_target
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+      Shape: Arrow
+      Color: 255; 170; 0
+    - Class: rviz_default_plugins/Image
+      Name: Three lines in floor projection
+      Enabled: true
+      Topic:
+        Value: /rails/search/debug_bev
+        Reliability Policy: Reliable
+    - Class: rviz_default_plugins/Image
+      Name: Entry target and observed crossbar
+      Enabled: true
+      Topic:
+        Value: /rails/entry/debug_image
+        Reliability Policy: Reliable
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Straight entry distance
+      Enabled: true
+      Marker Topic:
+        Value: /rails/entry/drive_markers
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Top view
+      Scale: 100
+      Target Frame: map
+Window Geometry:
+  Width: 1200
+  Height: 800

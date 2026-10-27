@@ -1,0 +1,8 @@
+# Navigate only to the pre-entry pose; never perform rail entry.
+string rail_id
+---
+bool success
+string message
+---
+float32 distance_remaining
+string phase
