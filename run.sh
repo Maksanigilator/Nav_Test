@@ -72,7 +72,7 @@ if [ -n "$(docker ps -q -f name="^${NAME}$")" ]; then
     exec docker exec -it "${NAME}" zsh -ic 'exec "$@"' zsh "$@"
 fi
 
-mkdir -p "${WS}/src" "${WS}/datasets/zed_settings" "${WS}/datasets/zed_resources"
+mkdir -p "${WS}/src"
 
 # noVNC стартует в том же контейнере, до команды пользователя, и отдаёт
 # ей уже поднятый DISPLAY. Отдельный процесс на хосте не нужен: сеть host,
@@ -106,10 +106,13 @@ exec docker run -it --rm \
     `# есть не всегда (headless, другая машина), а лишние группы безвредны.` \
     $(getent group video  >/dev/null && echo --group-add "$(getent group video  | cut -d: -f3)") \
     $(getent group render >/dev/null && echo --group-add "$(getent group render | cut -d: -f3)") \
-    --gpus all \
+    `# Видеокарта NVIDIA. Ключ безусловным быть НЕ МОЖЕТ: на машине без` \
+    `# NVIDIA докер отвечает "could not select device driver" и контейнер` \
+    `# не стартует вовсе. Переменная NO_NVIDIA ставится из run_no_nvidia.sh.` \
+    $([ -z "${NO_NVIDIA:-}" ] && echo --gpus all) \
     -e DISPLAY="${DISPLAY}" \
     -e XAUTHORITY=/tmp/.docker.xauth \
-    -e NVIDIA_DRIVER_CAPABILITIES=all \
+    $([ -z "${NO_NVIDIA:-}" ] && printf "%s\\n" -e NVIDIA_DRIVER_CAPABILITIES=all) \
     -e ROS_DOMAIN_ID="${ROS_DOMAIN_ID}" \
     `# Транспорт Fast DDS НЕ навязываем: контейнер работает под тем же UID,` \
     `# что и процессы на хосте (см. --user ниже), поэтому разделяемая память` \
@@ -125,7 +128,7 @@ exec docker run -it --rm \
          printf '%s\n' -e LIBGL_ALWAYS_SOFTWARE=1 -e GALLIUM_DRIVER=llvmpipe \
              -e QT_QPA_PLATFORM=xcb -e QT_X11_NO_MITSHM=1 \
              -e MESA_GL_VERSION_OVERRIDE=3.3
-     else
+     elif [ -z "${NO_NVIDIA:-}" ]; then
          printf '%s\n' -e __NV_PRIME_RENDER_OFFLOAD=1 \
              -e __GLX_VENDOR_LIBRARY_NAME=nvidia
      fi) \
@@ -187,22 +190,6 @@ exec docker run -it --rm \
     -v "${WS}/fastdds_profiles.xml:/root/fastdds_profiles.xml:ro" \
     -e FASTDDS_DEFAULT_PROFILES_FILE=/root/fastdds_profiles.xml \
     -e FASTRTPS_DEFAULT_PROFILES_FILE=/root/fastdds_profiles.xml \
-    `# Заводские калибровки камер ZED. Лежат СНАРУЖИ образа намеренно:` \
-    `# SDK скачивает их по серийному номеру при первом подключении, и в` \
-    `# образе они пропадали бы при каждой пересборке — камера каждый раз` \
-    `# ходила бы в сеть, а без сети не открывалась бы вовсе.` \
-    -v "${WS}/datasets/zed_settings:/usr/local/zed/settings" \
-    `# Модели глубины и СКОМПИЛИРОВАННЫЕ под видеокарту движки. Тоже` \
-    `# наружу, и по той же причине, только цена ошибки выше: при первом` \
-    `# запуске SDK прогоняет нейросеть через TensorRT под конкретную` \
-    `# карту, и это ШЕСТЬ МИНУТ. Каталог в образе принадлежит root:zed с` \
-    `# правами 775, наш пользователь туда не пишет — движок не` \
-    `# сохранялся бы вовсе, и шесть минут повторялись бы при каждом` \
-    `# запуске, благо контейнер с --rm.` \
-    `#` \
-    `# Сами модели сюда скопированы из образа: монтирование перекрыло бы` \
-    `# их, и SDK остался бы вообще без сети для расчёта глубины.` \
-    -v "${WS}/datasets/zed_resources:/usr/local/zed/resources" \
     `# артефакты сборки и кэш Gazebo — в томах, на хост не выносятся` \
     -v nav2_build:/root/ros_ws/build \
     -v nav2_install:/root/ros_ws/install \
