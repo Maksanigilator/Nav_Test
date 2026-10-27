@@ -27,8 +27,10 @@ from launch.actions import (DeclareLaunchArgument, GroupAction,
                             IncludeLaunchDescription)
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PythonExpression
+from launch.substitutions import (LaunchConfiguration, PathJoinSubstitution,
+                                  PythonExpression)
 from launch_ros.actions import Node, SetRemap
+from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
@@ -111,10 +113,17 @@ def generate_launch_description():
             # горизонтом становится то, как камера была наклонена в
             # первое мгновение, и вся карта наследует этот перекос.
             SetRemap('/zed/zed_node/imu/data', '/imu/data'),
+            # ПУТЬ ИЩЕТСЯ ЛЕНИВО, подстановкой, а не get_package_share_directory.
+            # Слой ZED из образа убран (см. docker/Dockerfile), и пакета
+            # zed_wrapper в нём нет. Обычный поиск сработал бы ПРИ СБОРКЕ
+            # описания запуска — то есть при ЛЮБОМ camera:=, в том числе
+            # realsense, — и весь запуск падал бы на PackageNotFoundError.
+            # FindPackageShare разворачивается только когда группа реально
+            # исполняется, а её держит IfCondition(use_zed).
             IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(os.path.join(
-                    get_package_share_directory('zed_wrapper'), 'launch',
-                    'zed_camera.launch.py')),
+                PythonLaunchDescriptionSource(PathJoinSubstitution([
+                    FindPackageShare('zed_wrapper'), 'launch',
+                    'zed_camera.launch.py'])),
                 launch_arguments={
                     'camera_model': 'zedm',
                     'camera_name': 'zed',
