@@ -71,8 +71,7 @@ RUN apt-get update && apt-get install -y \
 #imu-filter-madgwick + robot-localization — IMU и слияние источников одометрии.
 #image-transport-plugins — сжатие depth/RGB: сырое облако 848x480 это ~390 МБ/с,
 #  по сети такое не ходит, гоняем сжатые картинки и считаем облако у потребителя.
-#python3-serial — приём потока с Pico по USB CDC: на плате MPU6050, и узел
-#  scripts/pico_imu_node.py разбирает её кадры в sensor_msgs/Imu. Ставим из
+#python3-serial — приём потока с ИНС по последовательному порту. Ставим из
 #  apt, а не pip: пакет системный, и так он не спорит с externally-managed.
 
 # rosbags — конвертер ROS1 bag -> ROS2 (датасеты TUM RGB-D лежат в формате ROS1).
@@ -82,7 +81,7 @@ RUN apt-get update && apt-get install -y \
 # pyrealsense2 нужен не для работы с живой камерой (её ведёт realsense2_camera),
 # а чтобы конвертировать записи .bag от librealsense. У ROS-обёртки нет режима
 # невещественного времени, из-за чего при выравнивании глубины она теряет кадры;
-# см. scripts/realsense_bag_to_ros2.py и RTABMAP.md.
+# Конвертер записей живёт в ветке rgbd-nav, вместе с остальным слоём RGB-D.
 RUN pip3 install --no-cache-dir --break-system-packages rosbags evo pyrealsense2
 
 # Скачиваем В ФАЙЛ, а не в подстановку команды.

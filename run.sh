@@ -72,7 +72,7 @@ if [ -n "$(docker ps -q -f name="^${NAME}$")" ]; then
     exec docker exec -it "${NAME}" zsh -ic 'exec "$@"' zsh "$@"
 fi
 
-mkdir -p "${WS}/src" "${WS}/datasets" "${WS}/datasets/zed_settings" "${WS}/datasets/zed_resources"
+mkdir -p "${WS}/src" "${WS}/datasets/zed_settings" "${WS}/datasets/zed_resources"
 
 # noVNC стартует в том же контейнере, до команды пользователя, и отдаёт
 # ей уже поднятый DISPLAY. Отдельный процесс на хосте не нужен: сеть host,
@@ -160,8 +160,8 @@ exec docker run -it --rm \
     -v /sys:/sys \
     --device-cgroup-rule "c 81:* rmw" \
     --device-cgroup-rule "c 189:* rmw" \
-    `# 166 — последовательные порты USB CDC (/dev/ttyACM*). Через такой` \
-    `# порт приходит поток с Pico с датчиком MPU6050, см. pico_imu.py.` \
+    `# 166 — последовательные порты USB CDC (/dev/ttyACM*): через такой` \
+    `# подключаются платы-микроконтроллеры и часть ИНС.` \
     --device-cgroup-rule "c 166:* rmw" \
     `# 188 — последовательные порты через переходник USB (/dev/ttyUSB*).` \
     `# Через такой подключена ИНС WT901C-485: у неё промышленный RS485, и` \
@@ -180,9 +180,6 @@ exec docker run -it --rm \
     $(getent group plugdev >/dev/null && echo --group-add "$(getent group plugdev | cut -d: -f3)") \
     `# код и данные пакета` \
     -v "${WS}/src:/root/ros_ws/src" \
-    `# стенд проверки передачи кадров в контейнер с YOLO: лежит в корне` \
-    `# проекта, а не в пакете, потому что к сборке ROS отношения не имеет` \
-    -v "${WS}/yolo_transport_test:/root/ros_ws/yolo_transport_test" \
     `# Профиль транспорта Fast DDS: поднимает сегмент разделяемой памяти` \
     `# с дефолтных ~512 КБ до 64 МБ. Кадр камеры 1.22 МБ в дефолтный сегмент` \
     `# не влезает, и разделяемая память для него не работает — замерено,` \
@@ -190,8 +187,6 @@ exec docker run -it --rm \
     -v "${WS}/fastdds_profiles.xml:/root/fastdds_profiles.xml:ro" \
     -e FASTDDS_DEFAULT_PROFILES_FILE=/root/fastdds_profiles.xml \
     -e FASTRTPS_DEFAULT_PROFILES_FILE=/root/fastdds_profiles.xml \
-    `# датасеты (TUM RGB-D и пр.) — гигабайты, в git не лежат, см. .gitignore` \
-    -v "${WS}/datasets:/datasets" \
     `# Заводские калибровки камер ZED. Лежат СНАРУЖИ образа намеренно:` \
     `# SDK скачивает их по серийному номеру при первом подключении, и в` \
     `# образе они пропадали бы при каждой пересборке — камера каждый раз` \
