@@ -623,6 +623,60 @@ def generate_launch_description():
             "'", LaunchConfiguration('rail_stage1'), _on,
             " and not '", LaunchConfiguration('legacy_rails'), _on])))])
 
+    # ═══ ВНЕШНЯЯ КАМЕРА ═══
+    #
+    # Камера со стороны видит робота по доске ArUco и знает, где он на
+    # полу, с точностью доли миллиметра. Отсюда два применения: эталон,
+    # с которым сравнивается одометрия, и граница площадки — та самая,
+    # которую раньше искали перепадом высоты по глубине.
+    #
+    # Привязка карты к полу считается ОДИН РАЗ, по стартовой позе, и
+    # дальше не пересчитывается. Пересчёт на ходу сводил бы расхождение
+    # к нулю по построению, и мерить стало бы нечего.
+    #
+    # Точка отсчёта здесь base_footprint — та же, что у одометрии. Доска
+    # же стоит не в центре, и её смещение задаётся относительно того, на
+    # чём она закреплена (board_frame, по умолчанию корпус камеры):
+    # рулеткой от камеры мерить проще, а связь с центром робота узлы сами
+    # возьмут из его описания.
+    ext_cam_on = IfCondition(LaunchConfiguration('ext_cam'))
+    # ТИП ЗАДАЁТСЯ ЯВНО. Значение из командной строки — строка, и launch
+    # угадывает её тип сам: "0.30" станет вещественным, а "180" — ЦЕЛЫМ.
+    # Узел объявляет эти параметры вещественными, и на целом падает с
+    # InvalidParameterTypeException ещё до первой строки в журнале.
+    def as_float(name):
+        return ParameterValue(LaunchConfiguration(name), value_type=float)
+
+    board = [{'board_x': as_float('board_x'),
+              'board_y': as_float('board_y'),
+              'board_yaw': as_float('board_yaw'),
+              'board_frame': LaunchConfiguration('board_frame'),
+              'base_frame': 'base_footprint'}]
+    url = [{'url': LaunchConfiguration('ext_cam_url')}]
+    ext_cam_nodes = [
+        Node(package='maze_nav', executable='ext_cam_pose.py',
+             name='ext_cam_pose', output='screen',
+             condition=ext_cam_on, parameters=url),
+        Node(package='maze_nav', executable='ext_cam_anchor.py',
+             name='ext_cam_anchor', output='screen',
+             condition=ext_cam_on, parameters=board),
+        Node(package='maze_nav', executable='ext_cam_grid.py',
+             name='ext_cam_grid', output='screen',
+             condition=ext_cam_on, parameters=url),
+        Node(package='maze_nav', executable='ext_cam_tracks.py',
+             name='ext_cam_tracks', output='screen',
+             condition=ext_cam_on, parameters=board),
+        # Второе окно: только две траектории, вид сверху. Открывается,
+        # когда включены И камера, И сам RViz.
+        Node(package='rviz2', executable='rviz2', output='log',
+             name='rviz_tracks',
+             condition=IfCondition(PythonExpression([
+                 "'", LaunchConfiguration('ext_cam'), _on,
+                 " and '", LaunchConfiguration('rviz'), _on])),
+             arguments=['-d', os.path.join(pkg, 'rviz',
+                                           'ext_cam_tracks.rviz')]),
+    ]
+
     return LaunchDescription([
         # Наша реализация заезда: накопленный слой рельсов в
         # dropoff_detector плюс rail_server с действиями /rail_entry и
@@ -694,8 +748,25 @@ def generate_launch_description():
                               'исправления, иначе инвертор развернёт '
                               'уже верный знак обратно'),
         DeclareLaunchArgument('rviz', default_value='true'),
+        DeclareLaunchArgument('ext_cam', default_value='false',
+                              description='внешняя камера: эталон позы, '
+                                          'граница площадки и сравнение '
+                                          'траекторий'),
+        DeclareLaunchArgument('ext_cam_url', default_value='',
+                              description='адрес приложения камеры; '
+                                          'пусто — поиск по mDNS'),
+        DeclareLaunchArgument('board_frame', default_value='camera_link',
+                              description='на чём закреплена доска ArUco'),
+        DeclareLaunchArgument('board_x', default_value='0.0',
+                              description='доска вперёд от board_frame, м'),
+        DeclareLaunchArgument('board_y', default_value='0.0',
+                              description='доска влево от board_frame, м'),
+        DeclareLaunchArgument('board_yaw', default_value='0.0',
+                              description='разворот доски, градусы; '
+                                          '180 — если закреплена наоборот'),
         rsp, camera, zed, madgwick, odom_imu, odom_plain,
         rail_server,
         stage1,
         slam_plain, slam_edge, dropoff, nav2, sign, rviz,
+        *ext_cam_nodes,
     ])

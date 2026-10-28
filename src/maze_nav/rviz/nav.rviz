@@ -148,6 +148,41 @@ Visualization Manager:
         Reliability Policy: Reliable
       Color Scheme: costmap
       Alpha: 0.5
+    # Внешняя камера. Топиков нет, пока запуск идёт без ext_cam:=true —
+    # слои просто остаются пустыми и ничему не мешают.
+    - Class: rviz_default_plugins/Map
+      Name: Граница площадки (внешняя камера)
+      Enabled: true
+      Topic:
+        Value: /ext_cam/grid
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+      Color Scheme: map
+      Draw Behind: true
+      Alpha: 0.35
+    - Class: rviz_default_plugins/Path
+      Name: Трек по одометрии
+      Enabled: true
+      Topic:
+        Value: /track/odom
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+      Color: 0; 255; 0
+      Line Style: Lines
+      Line Width: 0.03
+    - Class: rviz_default_plugins/Path
+      Name: Трек по внешней камере
+      Enabled: true
+      Topic:
+        Value: /track/ext_cam
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+      Color: 255; 150; 0
+      Line Style: Lines
+      Line Width: 0.03
     - Class: rviz_default_plugins/Path
       Name: Путь Nav2
       Enabled: true
