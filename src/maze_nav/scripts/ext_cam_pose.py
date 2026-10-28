@@ -43,7 +43,11 @@ class ExtCamPose(Node):
         super().__init__('ext_cam_pose')
         self.declare_parameter('url', '')
         self.declare_parameter('service', '_extcam._tcp.local.')
-        self.declare_parameter('frame_id', 'map')
+        # Кадр пола внешней камеры, а НЕ map: поза приходит в системе
+        # отсчёта напечатанной на полу сетки. Связь с map даёт
+        # ext_cam_anchor; назвать этот кадр map значило бы заявить,
+        # что они совпадают, а они совпадают только после привязки.
+        self.declare_parameter('frame_id', 'ext_cam_floor')
         self.declare_parameter('topic', 'ext_cam/pose')
         self.declare_parameter('discovery_timeout', 15.0)
         self.declare_parameter('reconnect_delay', 2.0)

@@ -31,6 +31,9 @@ install(PROGRAMS
   scripts/wt901_node.py
   scripts/rail_entry_monitor.py
   scripts/ext_cam_pose.py
+  scripts/ext_cam_anchor.py
+  scripts/ext_cam_grid.py
+  scripts/ext_cam_tracks.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
