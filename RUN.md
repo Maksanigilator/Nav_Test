@@ -1305,7 +1305,15 @@ docker compose up rail_mask
 
 ```bash
 ./run.sh ros2 run maze_nav ext_cam_pose.py --ros-args \
-    -p url:=http://macbook.local:8080
+    -p url:=http://ИМЯ-МАКА.local:8080
+```
+
+Имя подставлять настоящее — у маков оно бывает с дефисами и заглавными,
+вроде `MacBook-Air--Maksim.local`. Узнать его можно с любой стороны:
+
+```bash
+dns-sd -B _extcam._tcp                      # на самом маке
+avahi-browse -rt _extcam._tcp               # с линукса, покажет и хост, и порт
 ```
 
 Поиск требует библиотеки `zeroconf`. Она добавлена в `docker/Dockerfile`, но
