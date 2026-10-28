@@ -30,6 +30,7 @@ install(PROGRAMS
   scripts/cam_pitch.py
   scripts/wt901_node.py
   scripts/rail_entry_monitor.py
+  scripts/ext_cam_pose.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -83,7 +83,13 @@ RUN apt-get update && apt-get install -y \
 # а чтобы конвертировать записи .bag от librealsense. У ROS-обёртки нет режима
 # невещественного времени, из-за чего при выравнивании глубины она теряет кадры;
 # см. scripts/realsense_bag_to_ros2.py и RTABMAP.md.
-RUN pip3 install --no-cache-dir --break-system-packages rosbags evo pyrealsense2
+# zeroconf — поиск внешней камеры в сети по mDNS, без прописывания адреса.
+# Тот же механизм, которым находятся принтеры и Chromecast. Нужен именно
+# библиотекой, а не через резолвер системы: в образе нет libnss-mdns, а
+# systemd-resolved на хосте отдаёт mDNS только Avahi, до которого из
+# контейнера нет сокета. Библиотека шлёт мультикаст сама, и при
+# --network host это работает без доработок.
+RUN pip3 install --no-cache-dir --break-system-packages rosbags evo pyrealsense2 zeroconf
 
 # Скачиваем В ФАЙЛ, а не в подстановку команды.
 #
