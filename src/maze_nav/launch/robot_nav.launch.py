@@ -607,14 +607,21 @@ def generate_launch_description():
     # одинаковым именем НАСЛЕДУЮТСЯ от родителя, а у нас rviz=true. Из-за
     # этого открывались два окна сразу.
     _on = "'.lower() in ('true', '1', 'yes')"
-    stage1 = IncludeLaunchDescription(
+    # ОБЁРНУТО В GroupAction НАРОЧНО. launch_arguments вложенного запуска
+    # НЕ остаются внутри него: rviz:=false, переданный сюда, перетирал
+    # наш собственный rviz=true, и окно RViz молча не открывалось — узел
+    # с ложным условием ошибкой не считается и в журнал не попадает.
+    # Заметно это стало только когда rail_stage1 собрали: до того весь
+    # запуск падал раньше, на PackageNotFoundError. GroupAction со своей
+    # областью видимости держит значение внутри.
+    stage1 = GroupAction(scoped=True, actions=[IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('rail_stage1'), 'launch',
             'rail_stage1.launch.py')),
         launch_arguments={'rviz': 'false'}.items(),
         condition=IfCondition(PythonExpression([
             "'", LaunchConfiguration('rail_stage1'), _on,
-            " and not '", LaunchConfiguration('legacy_rails'), _on])))
+            " and not '", LaunchConfiguration('legacy_rails'), _on])))])
 
     return LaunchDescription([
         # Наша реализация заезда: накопленный слой рельсов в
