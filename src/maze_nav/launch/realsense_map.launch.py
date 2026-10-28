@@ -86,6 +86,11 @@ def generate_launch_description():
             # сам способен уронить камеру с шины: она исчезает из lsusb, а
             # драйвер сыплет «No such device» на каждом кадре, и лечится
             # это только физическим переподключением. Включать осознанно.
+            # Живое плотное облако с камеры. По умолчанию выключено:
+            # 848x480 на тридцати герцах это около 200 МБ/с, и платить за
+            # него постоянно незачем — нужно оно только чтобы посмотреть
+            # глазами в RViz.
+            'pointcloud.enable': LaunchConfiguration('cloud'),
             'initial_reset': LaunchConfiguration('reset'),
         }.items(),
         condition=IfCondition(use_rs))
@@ -355,6 +360,10 @@ def generate_launch_description():
                                           'включать только осознанно'),
         DeclareLaunchArgument('viz', default_value='true',
                               description='окно rtabmap_viz'),
+        DeclareLaunchArgument('cloud', default_value='false',
+                              description='живое плотное облако с камеры '
+                                          'для просмотра в RViz; поток '
+                                          'немалый, включать по нужде'),
         # ГЛУБИНА ОБРЕЗАНА ЧЕТЫРЬМЯ МЕТРАМИ, и это главная настройка.
         # У ZED Mini стереобаза 62.9 мм (из её калибровки), а ошибка
         # глубины растёт как квадрат дальности и обратно базе:
